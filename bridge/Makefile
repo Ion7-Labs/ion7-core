@@ -1,0 +1,65 @@
+# Copyright (C) 2026 Ion7 Project Contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of ion7-core.
+#
+# ion7-core is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# ion7-core is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with ion7-core. If not, see <https://www.gnu.org/licenses/>.
+
+
+#
+# Usage:
+#   make LIB_DIR=/path/to/llama.cpp/build/bin
+#   make LIB_DIR=... ION7_LORA_NEW_API=1 ION7_CHAT_TMPL_NO_MODEL=1
+
+LIB_DIR    ?= /usr/local/lib
+BRIDGE_SO  := ion7_bridge.so
+BRIDGE_C   := ion7_bridge.c
+
+# Include path resolution.
+#
+# Default: infer from LIB_DIR — works when source and build share the same tree
+#   e.g. LIB_DIR=/path/to/llama.cpp/build/bin → root is ../../
+#
+# Override: set LLAMA_SRC when source and build directories are separate
+#   e.g. CI: make LIB_DIR=/tmp/llama-build/bin LLAMA_SRC=/tmp/llama-src
+LLAMA_SRC  ?=
+LLAMA_ROOT := $(if $(LLAMA_SRC),$(abspath $(LLAMA_SRC)),$(abspath $(LIB_DIR)/../..))
+LLAMA_INC  := $(LLAMA_ROOT)/include
+GGML_INC   := $(LLAMA_ROOT)/ggml/include
+
+CFLAGS := -O2 -fPIC -Wall -Wextra -I$(LLAMA_INC) -I$(GGML_INC)
+
+ifdef ION7_LORA_NEW_API
+    $(info [ion7-core] building with new LoRA API)
+    CFLAGS += -DION7_LORA_NEW_API=1
+endif
+
+ifdef ION7_CHAT_TMPL_NO_MODEL
+    $(info [ion7-core] building without model* in chat_apply_template)
+    CFLAGS += -DION7_CHAT_TMPL_NO_MODEL=1
+endif
+
+LDFLAGS := -shared -L$(LIB_DIR) -lllama -Wl,-rpath,$(LIB_DIR)
+
+all: $(BRIDGE_SO)
+
+$(BRIDGE_SO): $(BRIDGE_C) ion7_bridge.h
+	@echo "[ion7-core] compiling bridge..."
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BRIDGE_SO) $(BRIDGE_C)
+	@echo "[ion7-core] bridge ready → $(BRIDGE_SO)"
+
+clean:
+	rm -f $(BRIDGE_SO)
+
+.PHONY: all clean

@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"   # triggers on v1.0.0, v1.1.0, etc.
+
+env:
+  LLAMA_CPP_REF: master
+
+jobs:
+  # ── Build matrix ─────────────────────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            llama_lib: libllama.so
+            bridge_out: ion7_bridge.so
+            cmake_flags: ""
+
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            llama_lib: libllama.so
+            bridge_out: ion7_bridge.so
+            cmake_flags: ""
+
+          - name: macos-arm64
+            os: macos-latest
+            llama_lib: libllama.dylib
+            bridge_out: ion7_bridge.so
+            cmake_flags: "-DGGML_METAL=ON"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake build-essential
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
+      - name: Cache llama.cpp build
+        id: cache-llama
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llama-build
+          key: llama-${{ env.LLAMA_CPP_REF }}-${{ matrix.name }}
+
+      - name: Build llama.cpp
+        if: steps.cache-llama.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch ${{ env.LLAMA_CPP_REF }} \
+            https://github.com/ggerganov/llama.cpp /tmp/llama-src
+          cmake -B /tmp/llama-build /tmp/llama-src \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            ${{ matrix.cmake_flags }}
+          cmake --build /tmp/llama-build --config Release \
+            -j$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)
+
+      - name: Build ion7-core bridge
+        run: make build LIB_DIR=/tmp/llama-build/bin LLAMA_SRC=/tmp/llama-src
+
+      # ── Package release tarball ─────────────────────────────────────────────
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ASSET="ion7-core-${VERSION}-${{ matrix.name }}-cpu"
+          mkdir -p "${ASSET}/lib" "${ASSET}/src"
+
+          # Bridge
+          cp bridge/ion7_bridge.so "${ASSET}/lib/" 2>/dev/null || \
+          cp bridge/ion7_bridge.dylib "${ASSET}/lib/" 2>/dev/null || true
+
+          # llama.cpp shared libs (CPU-only build)
+          cp /tmp/llama-build/bin/libllama.* "${ASSET}/lib/" 2>/dev/null || true
+          cp /tmp/llama-build/bin/libggml*.  "${ASSET}/lib/" 2>/dev/null || true
+
+          # Lua sources
+          cp -r src/ion7 "${ASSET}/src/"
+
+          # Docs
+          cp README.md INSTALL.md LICENSE "${ASSET}/"
+
+          # Add a quick env setup helper
+          cat > "${ASSET}/setup.sh" << 'EOF'
+          #!/usr/bin/env bash
+          # Source this file to configure ion7-core environment variables.
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LLAMA_LIB="${SCRIPT_DIR}/lib/libllama.so"
+          export ION7_BRIDGE="${SCRIPT_DIR}/lib/ion7_bridge.so"
+          export LUA_PATH="${SCRIPT_DIR}/src/?.lua;${SCRIPT_DIR}/src/?/init.lua;${LUA_PATH}"
+          echo "[ion7-core] environment set (lib: ${SCRIPT_DIR}/lib)"
+          EOF
+          chmod +x "${ASSET}/setup.sh"
+
+          tar czf "${ASSET}.tar.gz" "${ASSET}/"
+          echo "ASSET_PATH=${ASSET}.tar.gz" >> "$GITHUB_ENV"
+          echo "ASSET_NAME=${ASSET}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: "*.tar.gz"
+
+  # ── Publish GitHub Release ──────────────────────────────────────────────────
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist/
+
+      - name: List assets
+        run: ls -lh dist/
+
+      - name: Write release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PREV_TAG=$(git tag --sort=-version:refname | sed -n '2p' || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log --oneline "${PREV_TAG}..HEAD" --no-merges | head -30)
+          else
+            CHANGES=$(git log --oneline --no-merges | head -30)
+          fi
+          cat > /tmp/release_notes.md << NOTES
+          ## ion7-core ${VERSION}
+
+          ### Pre-built bridges (CPU-only)
+
+          For GPU acceleration (CUDA/ROCm/Metal), compile the bridge with your local llama.cpp build:
+          \`\`\`bash
+          make build LIB_DIR=/path/to/llama.cpp/build/bin
+          \`\`\`
+
+          ### Built against llama.cpp ${{ env.LLAMA_CPP_REF }}
+
+          ### Changes
+          ${CHANGES}
+          NOTES
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ion7-core ${{ github.ref_name }}"
+          body_path: /tmp/release_notes.md
+          files: dist/*.tar.gz
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
