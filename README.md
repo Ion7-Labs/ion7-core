@@ -324,7 +324,7 @@ Free to use under the [GNU Affero General Public License v3](LICENSE). This mean
 
 If you want to integrate ion7-core into a proprietary product, closed-source game, or SaaS without AGPLv3 obligations, a commercial license is available.
 
-**→ [Contact for commercial licensing](mailto:contact@ion7.dev)**
+**→ [Contact for commercial licensing](mailto:5inq@kiji.dev)**
 
 Commercial licenses cover: single project use, team use, OEM embedding. Pricing on request.
 
