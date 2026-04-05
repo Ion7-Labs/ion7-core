@@ -30,7 +30,7 @@ jobs:
       - name: Run pure Lua tests
         run: luajit tests/test_pure.lua
 
-  # ── 2. Build bridge — Linux x86_64 ─────────────────────────────────────────
+  # ── 2. Build bridge - Linux x86_64 ─────────────────────────────────────────
   build-linux-x64:
     name: Build bridge (Linux x86_64)
     runs-on: ubuntu-22.04
@@ -74,7 +74,7 @@ jobs:
           nm -D bridge/ion7_bridge.so | grep " T ion7_" | head -10
           echo "=== Undefined symbols (must only be llama_*/ggml_*) ==="
           nm -D bridge/ion7_bridge.so | grep " U " | grep -v "llama_\|ggml_\|__" | wc -l | xargs -I{} echo "{} unexpected undefined symbols"
-          nm -D bridge/ion7_bridge.so | grep " U " | grep -v "llama_\|ggml_\|__" || echo "None — OK"
+          nm -D bridge/ion7_bridge.so | grep " U " | grep -v "llama_\|ggml_\|__" || echo "None - OK"
           echo "=== Pure Lua tests (no bridge needed) ==="
           luajit tests/test_pure.lua
 
@@ -84,7 +84,7 @@ jobs:
           name: ion7_bridge-linux-x64
           path: bridge/ion7_bridge.so
 
-  # ── 3. Build bridge — macOS ARM64 ──────────────────────────────────────────
+  # ── 3. Build bridge - macOS ARM64 ──────────────────────────────────────────
   build-macos-arm64:
     name: Build bridge (macOS ARM64)
     runs-on: macos-latest
@@ -139,7 +139,7 @@ jobs:
           name: ion7_bridge-macos-arm64
           path: bridge/ion7_bridge.so
 
-  # ── 4. Build bridge — Linux ARM64 ──────────────────────────────────────────
+  # ── 4. Build bridge - Linux ARM64 ──────────────────────────────────────────
   build-linux-arm64:
     name: Build bridge (Linux ARM64)
     runs-on: ubuntu-24.04-arm

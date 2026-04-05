@@ -40,7 +40,20 @@ GGML_INC   := $(LLAMA_ROOT)/ggml/include
 
 CFLAGS := -O2 -fPIC -Wall -Wextra -I$(LLAMA_INC) -I$(GGML_INC)
 
-LDFLAGS := -shared -L$(LIB_DIR) -lllama -Wl,-rpath,$(LIB_DIR)
+# On macOS, libllama.dylib does not re-export ggml symbols (strict two-level
+# namespace). The bridge uses ggml_threadpool_* which live in libggml.dylib.
+# Since the Lua loader loads libllama first (pulling in libggml transitively),
+# those symbols are already in the process by the time the bridge is dlopen'd.
+# -undefined dynamic_lookup defers symbol resolution to load time — the
+# idiomatic macOS solution for plugins/bridges loaded into a host process.
+UNAME := $(shell uname -s)
+ifeq ($(UNAME), Darwin)
+    LDFLAGS := -shared -L$(LIB_DIR) -lllama \
+               -Wl,-rpath,$(LIB_DIR) \
+               -Wl,-undefined,dynamic_lookup
+else
+    LDFLAGS := -shared -L$(LIB_DIR) -lllama -Wl,-rpath,$(LIB_DIR)
+endif
 
 all: $(BRIDGE_SO)
 
