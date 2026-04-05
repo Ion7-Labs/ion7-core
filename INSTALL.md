@@ -156,21 +156,6 @@ ls -lh bridge/ion7_bridge.so
 # Should output something like: -rwxr-xr-x 1 user user 48K Apr 2026 bridge/ion7_bridge.so
 ```
 
-### Build flags
-
-```bash
-# Enable new LoRA API (llama.cpp b8000+)
-make build LIB_DIR=... ION7_LORA_NEW_API=1
-
-# Build without model* parameter in chat_apply_template (older llama.cpp)
-make build LIB_DIR=... ION7_CHAT_TMPL_NO_MODEL=1
-
-# Both flags
-make build LIB_DIR=... ION7_LORA_NEW_API=1 ION7_CHAT_TMPL_NO_MODEL=1
-```
-
-See the [Build flags reference](#7-build-flags-reference) section for full details.
-
 ---
 
 ## 4. Library path configuration
@@ -297,39 +282,7 @@ make bench ION7_MODEL=... | jq '.benchmarks.generation'
 
 ---
 
-## 7. Build flags reference
-
-### ION7_LORA_NEW_API
-
-Enables the new LoRA adapter API introduced in llama.cpp around b8000. Use this if your llama.cpp build is recent (April 2026+). Without this flag, ion7-core uses the older `llama_adapter_lora_init` + `llama_set_adapters_lora` API which may not be present in recent builds.
-
-```bash
-make build LIB_DIR=... ION7_LORA_NEW_API=1
-```
-
-### ION7_CHAT_TMPL_NO_MODEL
-
-Some older llama.cpp versions require a `llama_model*` parameter in `llama_chat_apply_template`. Recent versions (b7500+) removed this parameter. If you get a linker error about `llama_chat_apply_template`, try toggling this flag.
-
-```bash
-make build LIB_DIR=... ION7_CHAT_TMPL_NO_MODEL=1
-```
-
-### Determining the right flags for your llama.cpp build
-
-```bash
-# Check if the new LoRA API is present:
-nm /path/to/llama.cpp/build/bin/libllama.so | grep llama_set_adapters_lora
-# → if found: use ION7_LORA_NEW_API=1
-
-# Check chat_apply_template signature:
-nm /path/to/llama.cpp/build/bin/libllama.so | grep llama_chat_apply_template
-# → compare parameter count with your llama.h
-```
-
----
-
-## 8. Platform-specific notes
+## 7. Platform-specific notes
 
 ### Linux + NVIDIA (CUDA)
 
@@ -371,7 +324,7 @@ Or build with the system install path where SELinux contexts are already set.
 
 ---
 
-## 9. Troubleshooting
+## 8. Troubleshooting
 
 ### `[ion7-core] cannot load libllama.so`
 
@@ -380,13 +333,6 @@ The loader cannot find `libllama.so`. Set the `LLAMA_LIB` environment variable t
 ### `[ion7-core] cannot load ion7_bridge.so`
 
 The bridge `.so` was not found. Set `ION7_BRIDGE` to the full path of `bridge/ion7_bridge.so`, or pass `bridge_path` to `ion7.init()`.
-
-### `undefined symbol: llama_set_adapters_lora`
-
-Your llama.cpp build uses the new LoRA API. Recompile the bridge:
-```bash
-make build LIB_DIR=... ION7_LORA_NEW_API=1
-```
 
 ### `undefined symbol: llama_chat_apply_template` or wrong parameter count
 
