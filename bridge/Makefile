@@ -20,7 +20,7 @@
 #
 # Usage:
 #   make LIB_DIR=/path/to/llama.cpp/build/bin
-#   make LIB_DIR=... ION7_LORA_NEW_API=1 ION7_CHAT_TMPL_NO_MODEL=1
+#   make LIB_DIR=...
 
 LIB_DIR    ?= /usr/local/lib
 BRIDGE_SO  := ion7_bridge.so
@@ -28,7 +28,7 @@ BRIDGE_C   := ion7_bridge.c
 
 # Include path resolution.
 #
-# Default: infer from LIB_DIR — works when source and build share the same tree
+# Default: infer from LIB_DIR - works when source and build share the same tree
 #   e.g. LIB_DIR=/path/to/llama.cpp/build/bin → root is ../../
 #
 # Override: set LLAMA_SRC when source and build directories are separate
@@ -39,16 +39,6 @@ LLAMA_INC  := $(LLAMA_ROOT)/include
 GGML_INC   := $(LLAMA_ROOT)/ggml/include
 
 CFLAGS := -O2 -fPIC -Wall -Wextra -I$(LLAMA_INC) -I$(GGML_INC)
-
-ifdef ION7_LORA_NEW_API
-    $(info [ion7-core] building with new LoRA API)
-    CFLAGS += -DION7_LORA_NEW_API=1
-endif
-
-ifdef ION7_CHAT_TMPL_NO_MODEL
-    $(info [ion7-core] building without model* in chat_apply_template)
-    CFLAGS += -DION7_CHAT_TMPL_NO_MODEL=1
-endif
 
 LDFLAGS := -shared -L$(LIB_DIR) -lllama -Wl,-rpath,$(LIB_DIR)
 

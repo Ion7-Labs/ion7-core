@@ -10,10 +10,8 @@ LIB_DIR      ?= /usr/local/lib
 ION7_MODEL   ?=
 ION7_EMBED   ?=
 ION7_LIB_DIR ?=
+LLAMA_LIB    ?=
 
-# Build flags (pass as make args)
-ION7_LORA_NEW_API       ?= 0
-ION7_CHAT_TMPL_NO_MODEL ?= 0
 
 .PHONY: build test bench bench-embed compare jitter stability clean all help
 
@@ -30,9 +28,7 @@ help:
 
 build:
 	$(MAKE) -C bridge \
-		LIB_DIR=$(LIB_DIR) \
-		$(if $(filter 1,$(ION7_LORA_NEW_API)),ION7_LORA_NEW_API=1,) \
-		$(if $(filter 1,$(ION7_CHAT_TMPL_NO_MODEL)),ION7_CHAT_TMPL_NO_MODEL=1,)
+		LIB_DIR=$(LIB_DIR)
 
 test: build
 	@echo ""
@@ -41,20 +37,21 @@ test: build
 	 bash tests/run_all.sh
 
 bench:
-	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) luajit benchmark/bench_lua.lua $(BENCH_ARGS) | python3 -m json.tool
+	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) LLAMA_LIB=$(LLAMA_LIB) luajit benchmark/bench_lua.lua $(BENCH_ARGS) | python3 -m json.tool
 
 bench-embed:
-	@ION7_EMBED=$(ION7_EMBED) luajit benchmark/bench_embed.lua
+	@ION7_EMBED=$(ION7_EMBED) LLAMA_LIB=$(LLAMA_LIB) luajit benchmark/bench_embed.lua
 
 compare:
-	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) bash benchmark/compare.sh $(BENCH_ARGS)
+	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) LLAMA_LIB=$(LLAMA_LIB) bash benchmark/compare.sh $(BENCH_ARGS)
 
 jitter:
-	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) bash benchmark/compare_jitter.sh $(BENCH_ARGS)
+	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) LLAMA_LIB=$(LLAMA_LIB) bash benchmark/compare_jitter.sh $(BENCH_ARGS)
 
 stability:
 	@ION7_MODEL=$(ION7_MODEL) \
 	 ION7_LIB_DIR=$(ION7_LIB_DIR) \
+	 LLAMA_LIB=$(LLAMA_LIB) \
 	 ION7_TOKENS=$(or $(ION7_TOKENS),100000) \
 	 luajit benchmark/bench_stability.lua
 
