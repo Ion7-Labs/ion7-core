@@ -73,6 +73,7 @@ local total_resets = 0
 -- capture post-load variation, not the one-time model allocation.
 local rss_min      = nil
 local rss_max      = nil
+local checkpoints  = {}
 
 io.write(string.format(
     "\n\27[1mion7-core stability benchmark\27[0m\n" ..
@@ -130,6 +131,12 @@ while total_tokens < N_TOKENS do
             rss_max = rss_max and math.max(rss_max, rss) or rss
             local dt = (now_ms() - t_last) / 1000.0
             t_last = now_ms()
+            checkpoints[#checkpoints + 1] = {
+                tokens  = total_tokens,
+                tps     = math.floor(tps * 10 + 0.5) / 10,
+                rss_mb  = math.floor(rss / 1024 * 10 + 0.5) / 10,
+                resets  = total_resets,
+            }
             io.write(string.format(
                 "  %-8d  %-8.1f  %-8.1f  %-8.1f  %-10.1fs  %-7.1fs  %-8d\n",
                 total_tokens,
@@ -187,4 +194,40 @@ io.write(string.format(
 ))
 
 io.write(string.rep("─", 72) .. "\n")
+
+-- ── JSON output (for gen_charts.py) ──────────────────────────────────────────
+
+local json_path = "benchmark/last_results_stability.json"
+local jf = io.open(json_path, "w")
+if jf then
+    local chk_lines = {}
+    for _, c in ipairs(checkpoints) do
+        chk_lines[#chk_lines + 1] = string.format(
+            '    {"tokens":%d,"tps":%.1f,"rss_mb":%.1f,"resets":%d}',
+            c.tokens, c.tps, c.rss_mb, c.resets)
+    end
+    jf:write(string.format([[{
+  "model": "%s",
+  "n_tokens_target": %d,
+  "avg_throughput": %.2f,
+  "total_time_s": %.1f,
+  "context_resets": %d,
+  "rss_start_mb": %.1f,
+  "rss_end_mb": %.1f,
+  "rss_warmup_mb": %.1f,
+  "rss_drift_mb": %.1f,
+  "checkpoints": [
+%s
+  ]
+}
+]], MODEL_PATH:match("[^/]+$") or MODEL_PATH,
+        N_TOKENS, tps_avg, elapsed, total_resets,
+        rss_start / 1024, rss_end / 1024,
+        (rss_min or rss_end) / 1024,
+        (rss_max - (rss_min or rss_max)) / 1024,
+        table.concat(chk_lines, ",\n")))
+    jf:close()
+    io.write(string.format("  JSON → %s\n", json_path))
+end
+
 ion7.shutdown()
