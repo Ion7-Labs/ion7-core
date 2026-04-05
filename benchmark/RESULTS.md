@@ -33,23 +33,11 @@ n_ctx 8192 · 35 GPU layers · n_gen 128 · n_repeat 3
 
 ### Speedup ratios
 
-```mermaid
-xychart-beta
-    title "ion7-core speedup vs llama-cpp-python (higher = faster)"
-    x-axis ["ctx create", "detokenize", "prefill avg", "model load", "grammar", "generation", "tokenize"]
-    y-axis "× faster" 0 --> 25
-    bar [23, 9, 1.32, 1.32, 1.05, 1.05, 1.01]
-```
+![speedup](charts/speedup.svg)
 
-### Generation throughput
+### Performance comparison
 
-```mermaid
-xychart-beta
-    title "Token generation — tok/s (higher = better)"
-    x-axis ["ion7-core", "llama-cpp-python"]
-    y-axis "tok/s" 55 --> 75
-    bar [67.3, 63.9]
-```
+![compare](charts/compare.svg)
 
 ### Full comparison table
 
@@ -92,27 +80,7 @@ xychart-beta
 n_ctx 8192 · 35 GPU layers · target 100 000 tokens  
 Checkpoint every 5 000 tokens, KV reset when context fills.
 
-### Memory (RSS)
-
-```mermaid
-xychart-beta
-    title "RSS memory over 100k tokens generated (MB)"
-    x-axis ["start", "5k", "10k", "20k", "30k", "40k", "50k", "60k", "70k", "80k", "90k", "100k"]
-    y-axis "MB" 620 --> 730
-    line [647.8, 708.3, 708.3, 708.3, 708.3, 708.3, 708.3, 708.3, 708.5, 708.5, 708.5, 708.5]
-```
-
-RSS jumps **+60.7 MB** at model load then holds flat for the entire run. The +0.2 MB between checkpoint 13 and 14 is OS memory accounting noise, not a leak.
-
-### Throughput
-
-```mermaid
-xychart-beta
-    title "Generation speed over 100k tokens (tok/s)"
-    x-axis ["5k", "10k", "20k", "30k", "40k", "50k", "60k", "70k", "80k", "90k", "100k"]
-    y-axis "tok/s" 60 --> 72
-    line [66.2, 66.2, 66.2, 66.2, 66.2, 66.2, 66.2, 66.2, 66.2, 66.2, 66.2]
-```
+![stability](charts/stability.svg)
 
 ### Stability table
 
