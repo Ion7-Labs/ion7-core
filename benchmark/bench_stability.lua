@@ -69,8 +69,10 @@ local t_start      = now_ms()
 local t_last       = t_start   -- for per-interval delta
 local total_tokens = 0
 local total_resets = 0
-local rss_min      = rss_start
-local rss_max      = rss_start
+-- rss_min/max are set at the FIRST checkpoint (post-warmup) so they only
+-- capture post-load variation, not the one-time model allocation.
+local rss_min      = nil
+local rss_max      = nil
 
 io.write(string.format(
     "\n\27[1mion7-core stability benchmark\27[0m\n" ..
@@ -124,8 +126,8 @@ while total_tokens < N_TOKENS do
             local rss     = rss_kb()
             local elapsed = (now_ms() - t_start) / 1000.0
             local tps     = total_tokens / elapsed
-            rss_min = math.min(rss_min, rss)
-            rss_max = math.max(rss_max, rss)
+            rss_min = rss_min and math.min(rss_min, rss) or rss
+            rss_max = rss_max and math.max(rss_max, rss) or rss
             local dt = (now_ms() - t_last) / 1000.0
             t_last = now_ms()
             io.write(string.format(
