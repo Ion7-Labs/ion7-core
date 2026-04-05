@@ -108,21 +108,21 @@ When llama.cpp changes its structs or param signatures, only the bridge needs re
 
 ## Benchmarks
 
-Tested on **Ryzen 9 9950X + RTX 3060 12GB**, Fedora 43, llama.cpp b8600, LuaJIT 2.1.
+Tested on **Ryzen 9 9950X + RTX 3060 12GB**, Fedora 43, llama.cpp b8600, LuaJIT 2.1.  
+Model: `Qwen2.5-7B-Instruct-Q4_K_M.gguf` — n_ctx 8192, 35 GPU layers.
 
-Model: `Qwen2.5-7B-Instruct-Q4_K_M.gguf` - context 8192, KV Q8_0, flash attention, 35 GPU layers.
+| Metric | ion7-core | vs llama-cpp-python |
+|---|---|---|
+| Token generation | **67 tok/s** | 1.05× faster |
+| Prompt prefill (avg) | **1 170 tok/s** | 1.32× faster |
+| Context creation | **17 ms** | 23× faster |
+| Detokenization | **0.001 ms** | 9× faster |
+| malloc/free per token | **0** | — |
+| RSS growth over 100k tokens | **0 MB** | — |
 
-| Metric | Value |
-|---|---|
-| Prompt processing (pp512) | ~2800 tok/s |
-| Token generation (tg128) | ~58 tok/s |
-| Overhead vs raw llama.cpp | < 1% |
-| Memory: Lua objects for a full ctx | ~48 bytes |
-| malloc/free per generated token | 0 (pre-allocated batch) |
+→ [Full results, charts and stability report](benchmark/RESULTS.md)
 
-The overhead of the bridge is in the noise. LuaJIT's FFI calls into C functions compile to near-native code once the JIT warms up.
-
-> Numbers will vary significantly with model size, quantization, and GPU. Run `make bench ION7_MODEL=your.gguf` for your own baseline.
+> Run `make bench ION7_MODEL=your.gguf` for your own baseline.
 
 ---
 
