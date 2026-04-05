@@ -13,7 +13,7 @@ ION7_LIB_DIR ?=
 LLAMA_LIB    ?=
 
 
-.PHONY: build test bench bench-embed compare jitter stability clean all help
+.PHONY: build test bench bench-embed compare jitter stability charts clean all help
 
 help:
 	@echo "ion7-core build targets:"
@@ -44,6 +44,10 @@ bench-embed:
 
 compare:
 	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) LLAMA_LIB=$(LLAMA_LIB) bash benchmark/compare.sh $(BENCH_ARGS)
+	@$(MAKE) --no-print-directory charts
+
+charts:
+	@python3 benchmark/gen_charts.py
 
 jitter:
 	@ION7_MODEL=$(ION7_MODEL) ION7_LIB_DIR=$(ION7_LIB_DIR) LLAMA_LIB=$(LLAMA_LIB) bash benchmark/compare_jitter.sh $(BENCH_ARGS)
