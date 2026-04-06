@@ -57,7 +57,7 @@ void ion7_log_dispatch(enum ggml_log_level level, const char* text, void* ud)
  * Version & info
  * ======================================================================= */
 
-const char* ion7_bridge_version(void) { return "2.0.0"; }
+const char* ion7_bridge_version(void) { return "1.1.0"; }
 const char* ion7_llama_info(void)     { return llama_print_system_info(); }
 
 /* =========================================================================
