@@ -119,11 +119,30 @@ int    ion7_lora_remove  (struct llama_context* ctx);
 int    ion7_lora_meta_val(const struct llama_adapter_lora* a, const char* key,
                            char* buf, size_t sz);
 
-/* ---- Chat template ------------------------------------------------------ */
-int32_t ion7_chat_apply_template(const char* tmpl,
-                                  const llama_chat_message* chat,
-                                  size_t n_msg,
-                                  bool add_ass, char* buf, int32_t length);
+/* ---- Chat templates (Jinja2, libcommon) --------------------------------- */
+typedef struct common_chat_templates ion7_chat_templates_t;
+ion7_chat_templates_t* ion7_chat_templates_init   (const struct llama_model* model, const char* tmpl_override);
+void    ion7_chat_templates_free   (ion7_chat_templates_t* t);
+int     ion7_chat_templates_support_thinking(const ion7_chat_templates_t* t);
+int32_t ion7_chat_templates_apply  (ion7_chat_templates_t* t,
+                                    const char** roles,
+                                    const char** contents,
+                                    size_t n_msgs,
+                                    int add_ass,
+                                    int enable_thinking,
+                                    char* buf, int32_t buf_len);
+
+/* ---- Reasoning budget --------------------------------------------------- */
+struct llama_sampler* ion7_reasoning_budget_init(const struct llama_model* model, int32_t n_budget);
+
+/* ---- Training (llama_opt) ----------------------------------------------- */
+typedef struct ion7_opt_state ion7_opt_state_t;
+typedef struct ggml_opt_dataset* ggml_opt_dataset_t;
+ion7_opt_state_t*  ion7_opt_init (struct llama_context* ctx, struct llama_model* model, int optimizer, float lr);
+void ion7_opt_free (ion7_opt_state_t* state);
+ggml_opt_dataset_t ion7_opt_dataset_create(struct llama_context* ctx, const int32_t* tokens, int64_t n_tokens, int64_t n_ctx);
+void ion7_opt_dataset_free (ggml_opt_dataset_t dataset);
+float ion7_opt_epoch (struct llama_context* ctx, ggml_opt_dataset_t dataset, float val_split);
 
 /* ---- Threadpool --------------------------------------------------------- */
 typedef struct ggml_threadpool ion7_threadpool_t;

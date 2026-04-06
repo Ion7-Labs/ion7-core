@@ -20,11 +20,15 @@
 #
 # Usage:
 #   make LIB_DIR=/path/to/llama.cpp/build/bin
-#   make LIB_DIR=...
+#   make LIB_DIR=... COMMON_LIB_DIR=/path/to/llama.cpp/build/common
+#
+# Bridge v2.0 — C++ build with libcommon integration.
+# Requires: libllama.so (LIB_DIR) + libcommon.a (COMMON_LIB_DIR)
 
+CXX        ?= g++
 LIB_DIR    ?= /usr/local/lib
 BRIDGE_SO  := ion7_bridge.so
-BRIDGE_C   := ion7_bridge.c
+BRIDGE_SRC := ion7_bridge.cpp
 
 # Include path resolution.
 #
@@ -37,8 +41,17 @@ LLAMA_SRC  ?=
 LLAMA_ROOT := $(if $(LLAMA_SRC),$(abspath $(LLAMA_SRC)),$(abspath $(LIB_DIR)/../..))
 LLAMA_INC  := $(LLAMA_ROOT)/include
 GGML_INC   := $(LLAMA_ROOT)/ggml/include
+COMMON_INC := $(LLAMA_ROOT)/common
 
-CFLAGS := -O2 -fPIC -Wall -Wextra -I$(LLAMA_INC) -I$(GGML_INC)
+# libcommon.a is typically in build/common/ next to build/bin/
+# Override with COMMON_LIB_DIR if it lives elsewhere.
+COMMON_LIB_DIR ?= $(abspath $(LIB_DIR)/../common)
+
+VENDOR_INC := $(LLAMA_ROOT)/vendor
+
+CXXFLAGS := -O2 -fPIC -std=c++17 -Wall -Wextra \
+            -isystem $(LLAMA_INC) -isystem $(GGML_INC) \
+            -isystem $(COMMON_INC) -isystem $(VENDOR_INC)
 
 # On macOS, libllama.dylib does not re-export ggml symbols (strict two-level
 # namespace). The bridge uses ggml_threadpool_* which live in libggml.dylib.
@@ -49,17 +62,20 @@ CFLAGS := -O2 -fPIC -Wall -Wextra -I$(LLAMA_INC) -I$(GGML_INC)
 UNAME := $(shell uname -s)
 ifeq ($(UNAME), Darwin)
     LDFLAGS := -shared -L$(LIB_DIR) -lllama \
+               $(COMMON_LIB_DIR)/libcommon.a \
                -Wl,-rpath,$(LIB_DIR) \
                -Wl,-undefined,dynamic_lookup
 else
-    LDFLAGS := -shared -L$(LIB_DIR) -lllama -Wl,-rpath,$(LIB_DIR)
+    LDFLAGS := -shared -L$(LIB_DIR) -lllama \
+               $(COMMON_LIB_DIR)/libcommon.a \
+               -Wl,-rpath,$(LIB_DIR)
 endif
 
 all: $(BRIDGE_SO)
 
-$(BRIDGE_SO): $(BRIDGE_C) ion7_bridge.h
-	@echo "[ion7-core] compiling bridge..."
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BRIDGE_SO) $(BRIDGE_C)
+$(BRIDGE_SO): $(BRIDGE_SRC) ion7_bridge.h
+	@echo "[ion7-core] compiling bridge (C++17 + libcommon)..."
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $(BRIDGE_SO) $(BRIDGE_SRC)
 	@echo "[ion7-core] bridge ready → $(BRIDGE_SO)"
 
 clean:

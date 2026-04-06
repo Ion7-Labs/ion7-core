@@ -381,25 +381,6 @@ void ion7_perf_get(struct llama_context* ctx,
                     int32_t* n_eval,      int32_t* n_reused);
 
 /* =========================================================================
- * Chat template
- * ======================================================================= */
-
-/**
- * Apply a Jinja-like chat template to a message array.
- *
- * @param tmpl     Template string. NULL uses the model's embedded template.
- * @param chat     Array of llama_chat_message structs.
- * @param n_msg    Number of messages.
- * @param add_ass  Append the assistant turn prefix to the output.
- * @param buf      Output buffer.
- * @param length   Output buffer size in bytes.
- * @return         Total bytes needed. If > length, resize and call again.
- */
-int32_t ion7_chat_apply_template(const char* tmpl,
-                                  const llama_chat_message* chat, size_t n_msg,
-                                  bool add_ass, char* buf, int32_t length);
-
-/* =========================================================================
  * Threadpool
  * ======================================================================= */
 
@@ -473,6 +454,130 @@ struct llama_sampler* ion7_sampler_create(
 
 /** Print bridge and llama.cpp struct sizes to stderr (ABI validation). */
 void ion7_print_struct_sizes(void);
+
+/* =========================================================================
+ * ── C++ EXTENSIONS (libcommon — bridge v2.0) ─────────────────────────────
+ * Requires libcommon. Available when ION7_BRIDGE_VERSION >= "2.0.0".
+ * ======================================================================= */
+
+/* ── Chat Templates (Jinja2 native) ────────────────────────────────────── */
+
+/**
+ * Opaque handle to a common_chat_templates instance.
+ * Wraps the Jinja2 template engine embedded in the GGUF.
+ */
+typedef struct common_chat_templates ion7_chat_templates_t;
+
+/**
+ * Initialise chat templates from a loaded model.
+ * @param tmpl_override  Override the model's embedded template. NULL = use model's.
+ * @return               Opaque handle, or NULL on failure. Free with ion7_chat_templates_free.
+ */
+ion7_chat_templates_t* ion7_chat_templates_init(
+    const struct llama_model* model,
+    const char*               tmpl_override);
+
+/** Free a chat templates handle. Safe to call with NULL. */
+void ion7_chat_templates_free(ion7_chat_templates_t* t);
+
+/**
+ * Returns 1 if the model's Jinja2 template supports the enable_thinking parameter.
+ * (Qwen3/3.5, DeepSeek-R1, and similar reasoning models return 1.)
+ */
+int ion7_chat_templates_support_thinking(const ion7_chat_templates_t* t);
+
+/**
+ * Apply a Jinja2 chat template with full parameter support.
+ *
+ * @param roles             Array of n_msgs role strings ("system","user","assistant").
+ * @param contents          Array of n_msgs content strings.
+ * @param n_msgs            Number of messages.
+ * @param add_ass           1 = append assistant generation prefix.
+ * @param enable_thinking   -1 = model default, 0 = disable thinking, 1 = enable thinking.
+ * @param buf               Output buffer. May be NULL for size query.
+ * @param buf_len           Size of buf in bytes.
+ * @return                  Total bytes needed (including NUL). Resize and retry if > buf_len.
+ */
+int32_t ion7_chat_templates_apply(
+    ion7_chat_templates_t* t,
+    const char**           roles,
+    const char**           contents,
+    size_t                 n_msgs,
+    int                    add_ass,
+    int                    enable_thinking,
+    char*                  buf,
+    int32_t                buf_len);
+
+/* ── Reasoning Budget ──────────────────────────────────────────────────── */
+
+/**
+ * Create a reasoning-budget sampler that hard-limits the token count inside
+ * <think>...</think> blocks for Qwen3/3.5 and compatible models.
+ *
+ * Insert into a sampler chain via llama_sampler_chain_add().
+ * The chain takes ownership; do not free manually after adding.
+ *
+ * @param model     Loaded model (used to tokenize delimiters).
+ * @param n_budget  Max tokens inside the block.
+ *                  0 = completely disable thinking (pre-fills empty block).
+ *                 -1 = unlimited (passthrough, useful for dynamic control).
+ * @return          llama_sampler*, or NULL on failure.
+ */
+struct llama_sampler* ion7_reasoning_budget_init(
+    const struct llama_model* model,
+    int32_t                   n_budget);
+
+/* ── Training (llama_opt API) ──────────────────────────────────────────── */
+
+/** Opaque training state handle returned by ion7_opt_init. */
+typedef struct ion7_opt_state ion7_opt_state_t;
+
+/**
+ * Initialise training on a context.
+ *
+ * Must be called before ion7_opt_epoch. The context must have been created
+ * with F32 or BF16 KV cache (quantized KV is not supported during training).
+ *
+ * @param optimizer  0 = AdamW (recommended), 1 = SGD.
+ * @param lr         Learning rate (e.g. 1e-4 for LoRA, 1e-5 for full fine-tune).
+ * @return           Opaque state handle. Free with ion7_opt_free when done.
+ */
+ion7_opt_state_t* ion7_opt_init(
+    struct llama_context* ctx,
+    struct llama_model*   model,
+    int                   optimizer,
+    float                 lr);
+
+/** Release training state. */
+void ion7_opt_free(ion7_opt_state_t* state);
+
+/**
+ * Create a training dataset from a pre-tokenised corpus.
+ *
+ * @param tokens    Flat array of llama_token (entire corpus).
+ * @param n_tokens  Total token count.
+ * @param n_ctx     Sequence length / context window.
+ * @return          Dataset handle. Free with ion7_opt_dataset_free.
+ */
+ggml_opt_dataset_t ion7_opt_dataset_create(
+    struct llama_context* ctx,
+    const llama_token*    tokens,
+    int64_t               n_tokens,
+    int64_t               n_ctx);
+
+/** Free a dataset. */
+void ion7_opt_dataset_free(ggml_opt_dataset_t dataset);
+
+/**
+ * Run one training epoch over the dataset.
+ *
+ * @param val_split  Fraction of dataset held out for validation (0.0 = none).
+ * @return           Average training loss, or -1.0 on error.
+ */
+float ion7_opt_epoch(
+    struct llama_context* ctx,
+    ggml_opt_dataset_t    dataset,
+    float                 val_split);
 
 #ifdef __cplusplus
 }

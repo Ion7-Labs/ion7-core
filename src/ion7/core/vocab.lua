@@ -25,9 +25,15 @@ local DETOK_BUF_SIZE  = 65536   -- 64  KB for detokenize output
 -- ── Vocab ─────────────────────────────────────────────────────────────────────
 
 --- @class Vocab
---- @field _ptr  cdata   Opaque llama_vocab* (not owned, do not free).
---- @field _lib  cdata   libllama.so namespace.
---- @field _model cdata  llama_model* for chat template calls.
+--- @field _ptr    cdata   Opaque llama_vocab* (not owned, do not free).
+--- @field _lib    cdata   libllama.so namespace.
+--- @field _model  cdata   llama_model* for chat template calls.
+--- @field _bridge cdata   ion7_bridge.so namespace.
+--- @field _ffi    cdata   LuaJIT ffi namespace.
+--- @field _tmpls  cdata   ion7_chat_templates_t* (owned, freed via ffi.gc).
+--- @field _piece_buf cdata Scratch buffer for token-to-piece conversion.
+--- @field _tmpl_buf  cdata Scratch buffer for chat template output.
+--- @field _dtok_buf  cdata Scratch buffer for detokenize output.
 local Vocab = {}
 Vocab.__index = Vocab
 
@@ -40,14 +46,24 @@ Vocab.__index = Vocab
 --- @return Vocab
 function Vocab.new(lib, model, ptr)
     assert(ptr ~= nil, "[ion7.core.vocab] vocab pointer is NULL")
-    local L   = Loader.instance()
-    local ffi = L.ffi
+    local L      = Loader.instance()
+    local ffi    = L.ffi
+    local bridge = L.bridge
+
+    -- Initialise Jinja2 chat templates from the model (libcommon).
+    -- ffi.gc ensures the handle is freed when the Vocab is collected.
+    local tmpls = ffi.gc(
+        bridge.ion7_chat_templates_init(model, nil),
+        bridge.ion7_chat_templates_free
+    )
+
     return setmetatable({
         _ptr    = ptr,
         _lib    = lib,
-        _bridge = L.bridge,
+        _bridge = bridge,
         _model  = model,
         _ffi    = ffi,
+        _tmpls  = tmpls,
         -- Pre-allocated scratch buffers
         _piece_buf = ffi.new("char[?]", PIECE_BUF_SIZE),
         _tmpl_buf  = ffi.new("char[?]", TMPL_BUF_SIZE),
@@ -241,20 +257,26 @@ function Vocab:builtin_templates()
     return result
 end
 
---- Apply the model's built-in chat template to a list of messages.
+--- Apply the model's Jinja2 chat template to a list of messages.
 ---
---- @param  messages   table   Array of { role = string, content = string }.
---- @param  add_ass    bool?   Append the assistant generation prompt (default: true).
---- @param  template   string? Override the model's default template (rarely needed).
---- @return string     Formatted prompt string ready for tokenisation.
---- @error  If the template application fails or the buffer overflows.
-function Vocab:apply_template(messages, add_ass, template)
-    if add_ass == nil then add_ass = true end
+--- @param  messages         table   Array of { role = string, content = string }.
+--- @param  add_ass          bool?   Append the assistant generation prompt (default: true).
+--- @param  enable_thinking  int?    -1 = model default, 0 = disable, 1 = enable (default: -1).
+--- @return string           Formatted prompt string ready for tokenisation.
+--- @error  If the template application fails.
+function Vocab:apply_template(messages, add_ass, enable_thinking)
+    if add_ass         == nil then add_ass         = true end
+    if enable_thinking == nil then enable_thinking = -1   end
 
-    local n   = #messages
-    local ffi = self._ffi
-    local msgs = ffi.new("llama_chat_message[?]", n)
-    -- Anchor Lua strings to prevent GC during the C call
+    local n      = #messages
+    local ffi    = self._ffi
+    local bridge = self._bridge
+
+    -- Build parallel C string pointer arrays.
+    -- Lua strings are anchored in role_refs/content_refs to prevent GC
+    -- during the bridge call (ffi pointers don't pin Lua strings).
+    local roles    = ffi.new("const char*[?]", n)
+    local contents = ffi.new("const char*[?]", n)
     local role_refs    = {}
     local content_refs = {}
 
@@ -263,36 +285,43 @@ function Vocab:apply_template(messages, add_ass, template)
         local content = tostring(msg.content or "")
         role_refs[i]    = role
         content_refs[i] = content
-        msgs[i - 1].role    = role
-        msgs[i - 1].content = content
+        roles[i - 1]    = role
+        contents[i - 1] = content
     end
 
-    -- Use bridge wrapper: handles API change between llama.cpp versions
-    -- (model param removed in master, ion7_chat_apply_template abstracts this)
-    local needed = self._bridge.ion7_chat_apply_template(
-        template or nil,
-        msgs, n,
-        add_ass,
+    local needed = bridge.ion7_chat_templates_apply(
+        self._tmpls,
+        roles, contents, n,
+        add_ass and 1 or 0,
+        enable_thinking,
         self._tmpl_buf, TMPL_BUF_SIZE
     )
     if needed < 0 then
-        error("[ion7.core.vocab] chat template output buffer too small", 2)
+        error("[ion7.core.vocab] chat template failed", 2)
     end
     if needed > TMPL_BUF_SIZE then
-        -- Grow buffer and retry
-        local big = ffi.new("char[?]", needed + 1)
-        needed = self._bridge.ion7_chat_apply_template(
-            template or nil,
-            msgs, n, add_ass,
-            big, needed + 1
+        local big = ffi.new("char[?]", needed)
+        needed = bridge.ion7_chat_templates_apply(
+            self._tmpls,
+            roles, contents, n,
+            add_ass and 1 or 0,
+            enable_thinking,
+            big, needed
         )
         if needed < 0 then
             error("[ion7.core.vocab] chat template failed on retry", 2)
         end
-        return ffi.string(big, needed)
+        return ffi.string(big, needed - 1)
     end
 
-    return ffi.string(self._tmpl_buf, needed)
+    return ffi.string(self._tmpl_buf, needed - 1)
+end
+
+--- Returns true if the model's template supports enable_thinking.
+--- (Qwen3/3.5, DeepSeek-R1 and similar reasoning models return true.)
+--- @return bool
+function Vocab:supports_thinking()
+    return self._bridge.ion7_chat_templates_support_thinking(self._tmpls) == 1
 end
 
 return Vocab

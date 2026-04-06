@@ -199,12 +199,6 @@ typedef struct llama_logit_bias {
     float       bias;
 } llama_logit_bias;
 
-/* ---- llama_chat_message ------------------------------------------------ */
-
-typedef struct llama_chat_message {
-    const char* role;
-    const char* content;
-} llama_chat_message;
 
 /* ---- llama_sampler_chain_params --------------------------------------- */
 
@@ -361,7 +355,6 @@ llama_token        llama_vocab_fim_sep        (const llama_vocab* vocab);
 int32_t llama_tokenize         (const llama_vocab* vocab, const char* text, int32_t text_len, llama_token* tokens, int32_t n_max, bool add_special, bool parse_special);
 int32_t llama_token_to_piece   (const llama_vocab* vocab, llama_token token, char* buf, int32_t length, int32_t lstrip, bool special);
 int32_t llama_detokenize       (const llama_vocab* vocab, const llama_token* tokens, int32_t n, char* text, int32_t text_len_max, bool remove_special, bool unparse_special);
-/* Use ion7_chat_apply_template() from the bridge instead of this function. */
 int32_t llama_chat_builtin_templates(const char** output, size_t len);
 
 /* Context */
