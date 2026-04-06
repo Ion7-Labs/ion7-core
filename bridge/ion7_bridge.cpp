@@ -40,12 +40,22 @@
 #include "chat.h"
 #include "common.h"
 #include "reasoning-budget.h"
+#include "sampling.h"
+#include "speculative.h"
+#include "regex-partial.h"
+#include "json-schema-to-grammar.h"
+#include "base64.hpp"
+
+/* nlohmann/json — full implementation needed for ordered_json::parse() */
+#include "nlohmann/json.hpp"
 
 /* Standard C++ */
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
+#include <chrono>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -802,4 +812,502 @@ float ion7_opt_epoch(
     ggml_opt_result_free(result_eval);
 
     return (float)loss;
+}
+
+/* =========================================================================
+ * ── Context warmup ────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+void ion7_context_warmup(struct llama_context* ctx)
+{
+    if (!ctx) return;
+    const llama_model* model = llama_get_model(ctx);
+    const llama_vocab* vocab = llama_model_get_vocab(model);
+    llama_token dummy = llama_vocab_bos(vocab);
+    if (dummy < 0) dummy = 0;
+    struct llama_batch batch = llama_batch_get_one(&dummy, 1);
+    llama_decode(ctx, batch);
+    ion7_kv_clear(ctx);
+}
+
+/* =========================================================================
+ * ── common_sampler (DRY, XTC, grammar_lazy, mirostat, logit bias) ────────
+ * ======================================================================= */
+
+/* Internal wrapper so we can store params alongside the sampler */
+struct ion7_csampler {
+    common_sampler* smpl;
+};
+
+ion7_csampler_t* ion7_csampler_init(
+    const struct llama_model*     model,
+    const ion7_csampler_params_t* p,
+    const char*                   grammar,
+    const char**                  trigger_words,
+    int                           n_triggers,
+    const int32_t*                logit_bias_ids,
+    const float*                  logit_bias_val,
+    int                           n_logit_bias)
+{
+    common_params_sampling sp;
+
+    if (p) {
+        sp.seed            = p->seed;
+        sp.top_k           = p->top_k;
+        sp.top_p           = p->top_p;
+        sp.min_p           = p->min_p;
+        sp.xtc_probability = p->xtc_probability;
+        sp.xtc_threshold   = p->xtc_threshold;
+        sp.temp            = p->temp;
+        sp.penalty_repeat  = p->repeat_penalty;
+        sp.penalty_freq    = p->freq_penalty;
+        sp.penalty_present = p->pres_penalty;
+        sp.penalty_last_n  = p->repeat_last_n;
+        sp.dry_multiplier      = p->dry_mult;
+        sp.dry_base            = p->dry_base;
+        sp.dry_allowed_length  = p->dry_allowed_len;
+        sp.dry_penalty_last_n  = p->dry_last_n;
+        sp.mirostat        = p->mirostat;
+        sp.mirostat_tau    = p->mirostat_tau;
+        sp.mirostat_eta    = p->mirostat_eta;
+        sp.grammar_lazy    = (bool)p->grammar_lazy;
+    }
+
+    if (grammar && grammar[0] != '\0')
+        sp.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, grammar);
+
+    for (int i = 0; i < n_triggers && trigger_words; i++) {
+        if (trigger_words[i]) {
+            common_grammar_trigger trig;
+            trig.type  = COMMON_GRAMMAR_TRIGGER_TYPE_WORD;
+            trig.value = trigger_words[i];
+            sp.grammar_triggers.push_back(std::move(trig));
+        }
+    }
+
+    for (int i = 0; i < n_logit_bias && logit_bias_ids && logit_bias_val; i++) {
+        llama_logit_bias lb;
+        lb.token = logit_bias_ids[i];
+        lb.bias  = logit_bias_val[i];
+        sp.logit_bias.push_back(lb);
+    }
+
+    auto* w = new ion7_csampler;
+    w->smpl = common_sampler_init(model, sp);
+    if (!w->smpl) { delete w; return nullptr; }
+    return w;
+}
+
+void ion7_csampler_free(ion7_csampler_t* s)
+{
+    if (!s) return;
+    common_sampler_free(s->smpl);
+    delete s;
+}
+
+int32_t ion7_csampler_sample(ion7_csampler_t* s, struct llama_context* ctx,
+                              int idx, int grammar_first)
+{
+    if (!s) return -1;
+    return common_sampler_sample(s->smpl, ctx, idx, (bool)grammar_first);
+}
+
+void ion7_csampler_accept(ion7_csampler_t* s, int32_t token)
+{
+    if (s) common_sampler_accept(s->smpl, token, true);
+}
+
+void ion7_csampler_reset(ion7_csampler_t* s)
+{
+    if (s) common_sampler_reset(s->smpl);
+}
+
+int32_t ion7_csampler_last(const ion7_csampler_t* s)
+{
+    if (!s) return -1;
+    return common_sampler_last(s->smpl);
+}
+
+uint32_t ion7_csampler_get_seed(const ion7_csampler_t* s)
+{
+    if (!s) return 0;
+    return common_sampler_get_seed(s->smpl);
+}
+
+/* =========================================================================
+ * ── Speculative decoding ─────────────────────────────────────────────────
+ * ======================================================================= */
+
+struct ion7_speculative {
+    common_speculative*      spec;
+    common_params_speculative params;
+};
+
+ion7_speculative_t* ion7_speculative_init(
+    struct llama_context* ctx_tgt,
+    struct llama_context* ctx_dft,
+    int type, int n_draft, int ngram_min, int ngram_max)
+{
+    auto* w = new ion7_speculative;
+    w->params.type      = (common_speculative_type)type;
+    w->params.n_max     = (n_draft > 0) ? n_draft : 16;
+    w->params.n_min     = 0;
+    /* ngram_min/ngram_max map to the n-gram table sizes */
+    if (ngram_min > 0) w->params.ngram_size_n = (uint16_t)ngram_min;
+    if (ngram_max > 0) w->params.ngram_size_m = (uint16_t)ngram_max;
+    /* For ION7_SPEC_DRAFT the draft model is taken from the draft context */
+    if (ctx_dft)
+        w->params.model_dft = const_cast<llama_model*>(llama_get_model(ctx_dft));
+    w->spec = common_speculative_init(w->params, ctx_tgt);
+    if (!w->spec) { delete w; return nullptr; }
+    return w;
+}
+
+void ion7_speculative_free(ion7_speculative_t* spec)
+{
+    if (!spec) return;
+    common_speculative_free(spec->spec);
+    delete spec;
+}
+
+void ion7_speculative_begin(ion7_speculative_t* spec,
+                             const int32_t* prompt, int n_prompt)
+{
+    if (!spec || !prompt) return;
+    llama_tokens toks(prompt, prompt + n_prompt);
+    common_speculative_begin(spec->spec, toks);
+}
+
+int ion7_speculative_draft(ion7_speculative_t* spec,
+                            const int32_t* prompt, int n_prompt,
+                            int32_t last_token,
+                            int32_t* out_draft, int max_draft)
+{
+    if (!spec || !prompt || !out_draft) return 0;
+    llama_tokens toks(prompt, prompt + n_prompt);
+    llama_tokens draft = common_speculative_draft(
+        spec->spec, spec->params, toks, last_token);
+    int n = (int)std::min((size_t)max_draft, draft.size());
+    for (int i = 0; i < n; i++) out_draft[i] = draft[i];
+    return n;
+}
+
+void ion7_speculative_accept(ion7_speculative_t* spec, int n_accepted)
+{
+    if (spec) common_speculative_accept(spec->spec, (uint16_t)n_accepted);
+}
+
+void ion7_speculative_stats(const ion7_speculative_t* spec)
+{
+    if (spec) common_speculative_print_stats(spec->spec);
+}
+
+/* =========================================================================
+ * ── Chat output parsing ───────────────────────────────────────────────────
+ * ======================================================================= */
+
+static void safe_copy(const std::string& src, char* dst, int32_t cap, int* truncated)
+{
+    if (!dst || cap <= 0) return;
+    size_t n = src.size();
+    if ((int32_t)n >= cap) { n = (size_t)(cap - 1); *truncated = 1; }
+    memcpy(dst, src.c_str(), n);
+    dst[n] = '\0';
+}
+
+int ion7_chat_parse(
+    ion7_chat_templates_t* t,
+    const char*            text,
+    int                    enable_thinking,
+    char*   content_buf,  int32_t content_len,
+    char*   thinking_buf, int32_t thinking_len,
+    char*   tools_buf,    int32_t tools_len,
+    int*    out_has_tools)
+{
+    if (!t || !text) return -1;
+
+    common_chat_parser_params pparams;
+    pparams.parse_tool_calls  = true;
+    pparams.reasoning_format  = (enable_thinking != 0)
+                                ? COMMON_REASONING_FORMAT_AUTO
+                                : COMMON_REASONING_FORMAT_NONE;
+
+    common_chat_msg msg = common_chat_parse(text, false, pparams);
+
+    int truncated = 0;
+    safe_copy(msg.content,            content_buf,  content_len,  &truncated);
+    safe_copy(msg.reasoning_content,  thinking_buf, thinking_len, &truncated);
+
+    /* Serialise tool_calls to a JSON array string */
+    std::ostringstream tools_json;
+    tools_json << "[";
+    for (size_t i = 0; i < msg.tool_calls.size(); i++) {
+        if (i > 0) tools_json << ",";
+        const auto& tc = msg.tool_calls[i];
+        tools_json << "{\"name\":\"" << tc.name
+                   << "\",\"arguments\":" << tc.arguments
+                   << ",\"id\":\"" << tc.id << "\"}";
+    }
+    tools_json << "]";
+    safe_copy(tools_json.str(), tools_buf, tools_len, &truncated);
+
+    if (out_has_tools) *out_has_tools = msg.tool_calls.empty() ? 0 : 1;
+    return truncated ? 1 : 0;
+}
+
+/* =========================================================================
+ * ── UTF-8 helpers ────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+int ion7_utf8_seq_len(uint8_t b)
+{
+    if ((b & 0x80) == 0x00) return 1;
+    if ((b & 0xE0) == 0xC0) return 2;
+    if ((b & 0xF0) == 0xE0) return 3;
+    if ((b & 0xF8) == 0xF0) return 4;
+    return 0;  /* continuation byte or invalid */
+}
+
+int ion7_utf8_is_complete(const char* buf, size_t len)
+{
+    if (!buf || len == 0) return 1;
+    const uint8_t* p = (const uint8_t*)buf;
+    size_t i = 0;
+    while (i < len) {
+        int seq = ion7_utf8_seq_len(p[i]);
+        if (seq == 0) return 0;  /* invalid */
+        if (i + (size_t)seq > len) return 0;  /* incomplete */
+        i += seq;
+    }
+    return 1;
+}
+
+/* =========================================================================
+ * ── JSON Schema → GBNF ───────────────────────────────────────────────────
+ * ======================================================================= */
+
+int ion7_json_schema_to_grammar(const char* schema_json, char* out, size_t out_len)
+{
+    if (!schema_json) return -1;
+    try {
+        auto schema = nlohmann::ordered_json::parse(schema_json);
+        std::string gbnf = json_schema_to_grammar(schema);
+        size_t needed = gbnf.size() + 1;
+        if (out && out_len >= needed)
+            memcpy(out, gbnf.c_str(), needed);
+        return (int)needed;
+    } catch (...) {
+        return -1;
+    }
+}
+
+/* =========================================================================
+ * ── Partial regex ────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+struct ion7_regex {
+    common_regex rx;
+    explicit ion7_regex(const char* p) : rx(p) {}
+};
+
+ion7_regex_t* ion7_regex_new(const char* pattern)
+{
+    if (!pattern) return nullptr;
+    try { return new ion7_regex(pattern); }
+    catch (...) { return nullptr; }
+}
+
+void ion7_regex_free(ion7_regex_t* r) { delete r; }
+
+int ion7_regex_search(ion7_regex_t* r, const char* text, size_t len, int partial)
+{
+    if (!r || !text) return 0;
+    std::string s(text, len);
+    common_regex_match m = r->rx.search(s, 0, /*as_match=*/false);
+    if (m.type == COMMON_REGEX_MATCH_TYPE_FULL)    return 2;
+    if (partial && m.type == COMMON_REGEX_MATCH_TYPE_PARTIAL) return 1;
+    return 0;
+}
+
+/* =========================================================================
+ * ── Control vectors ──────────────────────────────────────────────────────
+ * ======================================================================= */
+
+int ion7_cvec_apply(struct llama_context* ctx,
+                     const float* data, size_t len,
+                     int32_t n_embd, int32_t il_start, int32_t il_end)
+{
+    if (!ctx || !data) return -1;
+    return (int)llama_set_adapter_cvec(ctx, data, len, n_embd, il_start, il_end);
+}
+
+void ion7_cvec_clear(struct llama_context* ctx)
+{
+    if (ctx) llama_set_adapter_cvec(ctx, nullptr, 0, 0, -1, -1);
+}
+
+/* =========================================================================
+ * ── NUMA ─────────────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+void ion7_numa_init(int strategy)
+{
+    ggml_numa_init((enum ggml_numa_strategy)strategy);
+}
+
+int ion7_is_numa(void)
+{
+    return ggml_is_numa() ? 1 : 0;
+}
+
+/* =========================================================================
+ * ── CPU capability detection ─────────────────────────────────────────────
+ * ======================================================================= */
+
+void ion7_cpu_caps(ion7_cpu_caps_t* out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->sse3         = ggml_cpu_has_sse3();
+    out->ssse3        = ggml_cpu_has_ssse3();
+    out->avx          = ggml_cpu_has_avx();
+    out->avx2         = ggml_cpu_has_avx2();
+    out->avx_vnni     = ggml_cpu_has_avx_vnni();
+    out->bmi2         = ggml_cpu_has_bmi2();
+    out->f16c         = ggml_cpu_has_f16c();
+    out->fma          = ggml_cpu_has_fma();
+    out->avx512       = ggml_cpu_has_avx512();
+    out->avx512_vbmi  = ggml_cpu_has_avx512_vbmi();
+    out->avx512_vnni  = ggml_cpu_has_avx512_vnni();
+    out->avx512_bf16  = ggml_cpu_has_avx512_bf16();
+    out->amx_int8     = ggml_cpu_has_amx_int8();
+    out->neon         = ggml_cpu_has_neon();
+    out->arm_fma      = ggml_cpu_has_arm_fma();
+    out->fp16_va      = ggml_cpu_has_fp16_va();
+    out->dotprod      = ggml_cpu_has_dotprod();
+    out->matmul_int8  = ggml_cpu_has_matmul_int8();
+    out->sve          = ggml_cpu_has_sve();
+    out->sve_cnt      = ggml_cpu_get_sve_cnt();
+    out->sme          = ggml_cpu_has_sme();
+    out->riscv_v      = ggml_cpu_has_riscv_v();
+    out->rvv_vlen     = ggml_cpu_get_rvv_vlen();
+    out->vsx          = ggml_cpu_has_vsx();
+    out->wasm_simd    = ggml_cpu_has_wasm_simd();
+}
+
+/* =========================================================================
+ * ── Log routing ──────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+static FILE*  g_log_file       = nullptr;
+static int    g_log_timestamps = 0;
+
+static void ion7_log_cb_full(enum ggml_log_level level, const char* text, void* ud)
+{
+    (void)ud;
+    if (g_log_level <= 0) return;
+    int threshold = 5 - g_log_level;
+    if ((int)level < threshold) return;
+
+    FILE* dst = g_log_file ? g_log_file : stderr;
+    if (g_log_timestamps) {
+        auto now = std::chrono::system_clock::now();
+        auto t   = std::chrono::system_clock::to_time_t(now);
+        struct tm tm_buf;
+#ifdef _WIN32
+        localtime_s(&tm_buf, &t);
+#else
+        localtime_r(&t, &tm_buf);
+#endif
+        char ts[32];
+        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S ", &tm_buf);
+        fputs(ts, dst);
+    }
+    fputs(text, dst);
+    if (g_log_file) fflush(g_log_file);
+}
+
+void ion7_log_to_file(const char* path)
+{
+    if (g_log_file && g_log_file != stderr) {
+        fclose(g_log_file);
+        g_log_file = nullptr;
+    }
+    if (path && path[0] != '\0') {
+        g_log_file = fopen(path, "a");
+    }
+    /* Re-register the callback so it picks up the new file */
+    llama_log_set(ion7_log_cb_full, nullptr);
+}
+
+void ion7_log_set_timestamps(int enable)
+{
+    g_log_timestamps = enable ? 1 : 0;
+    llama_log_set(ion7_log_cb_full, nullptr);
+}
+
+/* =========================================================================
+ * ── Base64 ───────────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+int ion7_base64_encode(const uint8_t* data, size_t len, char* out, size_t out_len)
+{
+    if (!data || !out) return -1;
+    /* Required output: ceil(len/3)*4 + 1 */
+    size_t needed = ((len + 2) / 3) * 4 + 1;
+    if (out_len < needed) return -1;
+    std::string enc = base64::encode(reinterpret_cast<const char*>(data), len);
+    memcpy(out, enc.c_str(), enc.size() + 1);
+    return (int)enc.size();
+}
+
+int ion7_base64_decode(const char* src, size_t src_len, uint8_t* out, size_t out_len)
+{
+    if (!src || !out) return -1;
+    try {
+        std::string dec = base64::decode(src, src_len);
+        if (out_len < dec.size()) return -1;
+        memcpy(out, dec.data(), dec.size());
+        return (int)dec.size();
+    } catch (...) {
+        return -1;
+    }
+}
+
+/* =========================================================================
+ * ── JSON utilities ────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+int ion7_json_validate(const char* json_str)
+{
+    if (!json_str) return 0;
+    return nlohmann::ordered_json::accept(json_str) ? 1 : 0;
+}
+
+int ion7_json_format(const char* json_str, char* out, size_t out_len)
+{
+    if (!json_str) return -1;
+    try {
+        auto j = nlohmann::ordered_json::parse(json_str);
+        std::string s = j.dump(2);
+        size_t needed = s.size() + 1;
+        if (out && out_len >= needed)
+            memcpy(out, s.c_str(), needed);
+        return (int)needed;
+    } catch (...) { return -1; }
+}
+
+int ion7_json_merge(const char* base, const char* overlay,
+                     char* out, size_t out_len)
+{
+    if (!base || !overlay) return -1;
+    try {
+        auto j = nlohmann::ordered_json::parse(base);
+        j.merge_patch(nlohmann::ordered_json::parse(overlay));
+        std::string s = j.dump();
+        size_t needed = s.size() + 1;
+        if (out && out_len >= needed)
+            memcpy(out, s.c_str(), needed);
+        return (int)needed;
+    } catch (...) { return -1; }
 }

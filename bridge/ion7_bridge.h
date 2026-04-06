@@ -579,6 +579,386 @@ float ion7_opt_epoch(
     ggml_opt_dataset_t    dataset,
     float                 val_split);
 
+/* =========================================================================
+ * ── Context warmup (JIT GPU kernel compilation) ──────────────────────────
+ * ======================================================================= */
+
+/**
+ * Warm up the context by running a single dummy decode.
+ * Forces GPU backends to JIT-compile shaders before the real first decode,
+ * cutting time-to-first-token by 2-3x on CUDA/Metal/Vulkan.
+ * The KV cache is cleared after the warmup decode.
+ * Call once after ion7_context_create, before any real decode.
+ */
+void ion7_context_warmup(struct llama_context* ctx);
+
+/* =========================================================================
+ * ── common_sampler — advanced sampling (DRY, XTC, grammar_lazy, ...) ────
+ * ======================================================================= */
+
+/**
+ * Flat parameter struct for the common_sampler.
+ * Declare with ffi.new("ion7_csampler_params_t") and set fields directly.
+ */
+typedef struct {
+    uint32_t seed;              /**< LLAMA_DEFAULT_SEED (0xFFFFFFFF) for random.      */
+    int32_t  top_k;             /**< Keep top-k tokens. <= 0 = disabled.              */
+    float    top_p;             /**< Nucleus sampling threshold. 1.0 = disabled.      */
+    float    min_p;             /**< Min-p threshold. 0.0 = disabled.                 */
+    float    xtc_probability;   /**< XTC apply probability. 0.0 = disabled.           */
+    float    xtc_threshold;     /**< XTC removal threshold (default 0.1).             */
+    float    temp;              /**< Sampling temperature (default 0.8).              */
+    float    repeat_penalty;    /**< Repetition penalty. 1.0 = disabled.              */
+    float    freq_penalty;      /**< Frequency penalty.  0.0 = disabled.              */
+    float    pres_penalty;      /**< Presence penalty.   0.0 = disabled.              */
+    int32_t  repeat_last_n;     /**< Window for repeat penalties. -1 = full ctx.      */
+    float    dry_mult;          /**< DRY multiplier. 0.0 = disabled.                  */
+    float    dry_base;          /**< DRY base (default 1.75).                         */
+    int32_t  dry_allowed_len;   /**< DRY allowed sequence length (default 2).         */
+    int32_t  dry_last_n;        /**< DRY penalty window. -1 = full ctx.               */
+    int32_t  mirostat;          /**< 0 = off, 1 = Mirostat v1, 2 = Mirostat v2.      */
+    float    mirostat_tau;      /**< Mirostat target entropy (default 5.0).           */
+    float    mirostat_eta;      /**< Mirostat learning rate (default 0.1).            */
+    int32_t  grammar_lazy;      /**< 0 = apply grammar always, 1 = lazy (CRANE).     */
+} ion7_csampler_params_t;
+
+/** Opaque handle to a common_sampler instance. */
+typedef struct ion7_csampler ion7_csampler_t;
+
+/**
+ * Create a common_sampler.
+ *
+ * @param model            Loaded model (used for vocab and grammar compilation).
+ * @param params           Numeric sampling params. NULL = use all defaults.
+ * @param grammar          GBNF grammar string, or NULL for no grammar.
+ * @param trigger_words    Words that activate grammar_lazy. NULL = none.
+ * @param n_triggers       Length of trigger_words array.
+ * @param logit_bias_ids   Token IDs for manual logit bias. NULL = none.
+ * @param logit_bias_val   Corresponding bias values (added to raw logits).
+ * @param n_logit_bias     Length of both logit bias arrays.
+ * @return                 Opaque handle. Free with ion7_csampler_free.
+ */
+ion7_csampler_t* ion7_csampler_init(
+    const struct llama_model*     model,
+    const ion7_csampler_params_t* params,
+    const char*                   grammar,
+    const char**                  trigger_words,
+    int                           n_triggers,
+    const int32_t*                logit_bias_ids,
+    const float*                  logit_bias_val,
+    int                           n_logit_bias);
+
+/** Free a common_sampler. Safe to call with NULL. */
+void ion7_csampler_free(ion7_csampler_t* s);
+
+/**
+ * Sample a token from context logits at batch index idx.
+ * @param grammar_first  1 = apply grammar before other samplers (more correct, slower).
+ * @return               Sampled token ID.
+ */
+int32_t ion7_csampler_sample(ion7_csampler_t* s, struct llama_context* ctx,
+                              int idx, int grammar_first);
+
+/** Notify the sampler that token was accepted (updates grammar, DRY, mirostat state). */
+void ion7_csampler_accept(ion7_csampler_t* s, int32_t token);
+
+/** Reset all sampler state (grammar automaton, DRY history, mirostat). */
+void ion7_csampler_reset(ion7_csampler_t* s);
+
+/** Returns the last accepted token, or -1 if no token has been accepted yet. */
+int32_t ion7_csampler_last(const ion7_csampler_t* s);
+
+/** Returns the effective RNG seed used by this sampler instance. */
+uint32_t ion7_csampler_get_seed(const ion7_csampler_t* s);
+
+/* =========================================================================
+ * ── Speculative decoding (n-gram / draft model) ───────────────────────────
+ * ======================================================================= */
+
+#define ION7_SPEC_NGRAM_SIMPLE  0  /**< Simple n-gram from recent context.       */
+#define ION7_SPEC_NGRAM_CACHE   1  /**< LRU n-gram cache (≈ Cacheback paper).    */
+#define ION7_SPEC_NGRAM_MAP_K   2  /**< N-gram map with prediction statistics.   */
+#define ION7_SPEC_DRAFT         3  /**< Separate lighter draft model (ctx_dft).  */
+
+/** Opaque handle to a common_speculative instance. */
+typedef struct ion7_speculative ion7_speculative_t;
+
+/**
+ * Create a speculative decoder.
+ *
+ * @param ctx_tgt   Main (target) context. Always required.
+ * @param ctx_dft   Draft model context. Required for ION7_SPEC_DRAFT; NULL otherwise.
+ * @param type      ION7_SPEC_* constant.
+ * @param n_draft   Max draft tokens generated per step (default: 16).
+ * @param ngram_min Minimum n-gram size for n-gram types (default: 1).
+ * @param ngram_max Maximum n-gram size for n-gram types (default: 4).
+ * @return          Opaque handle, or NULL on failure. Free with ion7_speculative_free.
+ */
+ion7_speculative_t* ion7_speculative_init(
+    struct llama_context* ctx_tgt,
+    struct llama_context* ctx_dft,
+    int type, int n_draft, int ngram_min, int ngram_max);
+
+/** Free a speculative decoder. Safe to call with NULL. */
+void ion7_speculative_free(ion7_speculative_t* spec);
+
+/**
+ * Notify the speculative decoder of the full current prompt.
+ * Call before the generation loop and whenever the prompt changes.
+ */
+void ion7_speculative_begin(ion7_speculative_t* spec,
+                             const int32_t* prompt, int n_prompt);
+
+/**
+ * Generate draft tokens from the speculative decoder.
+ *
+ * @param prompt      Full current token sequence (prompt + accepted tokens so far).
+ * @param n_prompt    Length of prompt.
+ * @param last_token  Last token accepted by the target model.
+ * @param out_draft   Buffer receiving draft token IDs.
+ * @param max_draft   Capacity of out_draft. Typically equals n_draft from init.
+ * @return            Number of tokens written to out_draft.
+ */
+int ion7_speculative_draft(ion7_speculative_t* spec,
+                            const int32_t* prompt, int n_prompt,
+                            int32_t last_token,
+                            int32_t* out_draft, int max_draft);
+
+/**
+ * Report how many consecutive draft tokens the target model accepted.
+ * Must be called after each verification step.
+ */
+void ion7_speculative_accept(ion7_speculative_t* spec, int n_accepted);
+
+/** Print acceptance rate and effective speedup to stderr. */
+void ion7_speculative_stats(const ion7_speculative_t* spec);
+
+/* =========================================================================
+ * ── Chat output parsing (tool calls + thinking extraction) ───────────────
+ * ======================================================================= */
+
+/**
+ * Parse raw model output into structured content, thinking block, and tool calls.
+ *
+ * Buffers that are too small are NUL-terminated at their capacity limit.
+ * Returns 0 = ok, -1 = parse error, 1 = one or more buffers truncated.
+ *
+ * @param t               Chat templates handle (same as used for apply_template).
+ * @param text            Raw model output string (NUL-terminated).
+ * @param enable_thinking  1 = thinking was enabled, 0 = disabled, -1 = auto-detect.
+ * @param content_buf     Out: main response text.
+ * @param content_len     Capacity of content_buf.
+ * @param thinking_buf    Out: contents of <think>…</think> block. Empty string if none.
+ * @param thinking_len    Capacity of thinking_buf.
+ * @param tools_buf       Out: tool calls as a JSON array string. "[]" if none.
+ * @param tools_len       Capacity of tools_buf.
+ * @param out_has_tools   Out: set to 1 if at least one tool call was parsed.
+ */
+int ion7_chat_parse(
+    ion7_chat_templates_t* t,
+    const char*            text,
+    int                    enable_thinking,
+    char*   content_buf,  int32_t content_len,
+    char*   thinking_buf, int32_t thinking_len,
+    char*   tools_buf,    int32_t tools_len,
+    int*    out_has_tools);
+
+/* =========================================================================
+ * ── UTF-8 streaming helpers ───────────────────────────────────────────────
+ * ======================================================================= */
+
+/**
+ * Returns the expected byte length of a UTF-8 sequence from its first byte.
+ * @return 1-4 for valid leading bytes; 0 for continuation bytes or invalid input.
+ */
+int ion7_utf8_seq_len(uint8_t first_byte);
+
+/**
+ * Returns 1 if buf ends on a complete UTF-8 character boundary, 0 otherwise.
+ * Use before passing streamed bytes to Lua to avoid splitting multibyte characters.
+ */
+int ion7_utf8_is_complete(const char* buf, size_t len);
+
+/* =========================================================================
+ * ── JSON Schema → GBNF grammar ───────────────────────────────────────────
+ * ======================================================================= */
+
+/**
+ * Convert a JSON Schema (draft-07) to a GBNF grammar string.
+ *
+ * The C++ implementation handles $ref, anyOf, allOf, oneOf, and format
+ * constraints more robustly than the pure-Lua ion7-grammar module.
+ *
+ * @param schema_json  NUL-terminated JSON Schema string.
+ * @param out          Output buffer (NUL-terminated GBNF).
+ * @param out_len      Capacity of out.
+ * @return             Bytes needed (including NUL). -1 on parse error.
+ *                     If return > out_len, resize and call again.
+ */
+int ion7_json_schema_to_grammar(const char* schema_json, char* out, size_t out_len);
+
+/* =========================================================================
+ * ── Partial regex matching (streaming stop-string detection) ─────────────
+ * ======================================================================= */
+
+/** Opaque compiled regex handle. */
+typedef struct ion7_regex ion7_regex_t;
+
+/** Compile a regex pattern. Returns NULL on invalid pattern. */
+ion7_regex_t* ion7_regex_new(const char* pattern);
+
+/** Free a compiled regex. Safe to call with NULL. */
+void ion7_regex_free(ion7_regex_t* r);
+
+/**
+ * Match the pattern against text.
+ *
+ * When partial=1, also returns 1 for text that is a valid prefix of a future
+ * full match — used in streaming to decide whether to buffer more tokens.
+ *
+ * @return  0 = no match (can stop buffering),
+ *          1 = partial prefix match (keep buffering),
+ *          2 = full match (trigger stop).
+ */
+int ion7_regex_search(ion7_regex_t* r, const char* text, size_t len, int partial);
+
+/* =========================================================================
+ * ── Control vectors (activation steering) ───────────────────────────────
+ * ======================================================================= */
+
+/**
+ * Apply a control vector to the context.
+ *
+ * A control vector additively steers model behaviour at inference time
+ * without modifying model weights. Effective immediately on next decode.
+ *
+ * @param data      Float buffer of size n_embd × (il_end - il_start + 1).
+ *                  Layout: one n_embd-length vector per layer, layer il_start first.
+ * @param len       Total number of floats in data.
+ * @param n_embd    Model embedding dimension.
+ * @param il_start  First layer to apply (inclusive, 1-based).
+ * @param il_end    Last layer to apply  (inclusive, 1-based).
+ * @return          0 on success, non-zero on error.
+ */
+int ion7_cvec_apply(struct llama_context* ctx,
+                     const float* data, size_t len,
+                     int32_t n_embd, int32_t il_start, int32_t il_end);
+
+/** Remove the currently applied control vector. No-op if none is active. */
+void ion7_cvec_clear(struct llama_context* ctx);
+
+/* =========================================================================
+ * ── NUMA topology ────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+/**
+ * Configure NUMA memory policy. Call before ion7_backend_init for best effect.
+ *
+ * @param strategy  0=disabled, 1=distribute (round-robin across nodes),
+ *                  2=isolate (local node only — best for single-socket),
+ *                  3=numactl (follow numactl configuration),
+ *                  4=mirror (replicate on all nodes).
+ */
+void ion7_numa_init(int strategy);
+
+/** Returns 1 if NUMA was initialised with a non-disabled strategy. */
+int ion7_is_numa(void);
+
+/* =========================================================================
+ * ── CPU capability detection ─────────────────────────────────────────────
+ * ======================================================================= */
+
+/** CPU SIMD/ISA capability flags. All fields: 1 = supported, 0 = not supported. */
+typedef struct {
+    /* x86 */
+    int sse3, ssse3, avx, avx2, avx_vnni, bmi2, f16c, fma;
+    int avx512, avx512_vbmi, avx512_vnni, avx512_bf16, amx_int8;
+    /* ARM */
+    int neon, arm_fma, fp16_va, dotprod, matmul_int8;
+    int sve;      /**< 1 if SVE is available.                       */
+    int sve_cnt;  /**< SVE vector register size in bytes (e.g. 16). */
+    int sme;
+    /* Other ISAs */
+    int riscv_v;
+    int rvv_vlen; /**< RISC-V V vector register length in bits.     */
+    int vsx;
+    int wasm_simd;
+} ion7_cpu_caps_t;
+
+/** Fill *out with the capabilities of the current CPU. Always succeeds. */
+void ion7_cpu_caps(ion7_cpu_caps_t* out);
+
+/* =========================================================================
+ * ── Log routing ──────────────────────────────────────────────────────────
+ * ======================================================================= */
+
+/**
+ * Redirect llama.cpp log output to a file.
+ * @param path  Destination file path. NULL or "" = restore stderr (default).
+ */
+void ion7_log_to_file(const char* path);
+
+/**
+ * Toggle ISO-8601 timestamp prefix on each log line.
+ * @param enable  1 = prefix lines with timestamp, 0 = no prefix (default).
+ */
+void ion7_log_set_timestamps(int enable);
+
+/* =========================================================================
+ * ── Base64 encode / decode (for multimodal image data) ───────────────────
+ * ======================================================================= */
+
+/**
+ * Encode binary data to Base64.
+ * Required output capacity: ceil(len / 3) * 4 + 1 bytes.
+ * @return  Number of Base64 characters written (excluding NUL), or -1 if out_len too small.
+ */
+int ion7_base64_encode(const uint8_t* data, size_t len, char* out, size_t out_len);
+
+/**
+ * Decode a Base64 string to binary.
+ * Required output capacity: floor(src_len / 4) * 3 + 3 bytes.
+ * @return  Number of bytes decoded, or -1 on invalid input or buffer too small.
+ */
+int ion7_base64_decode(const char* src, size_t src_len, uint8_t* out, size_t out_len);
+
+/* =========================================================================
+ * ── JSON utilities (nlohmann/json, already linked via libcommon) ──────────
+ * All three functions are string-in / string-out: no C++ types cross the
+ * boundary, making them trivial to call from LuaJIT FFI.
+ * ======================================================================= */
+
+/**
+ * Validate a JSON string.
+ * @return  1 if the string is valid JSON, 0 otherwise.
+ */
+int ion7_json_validate(const char* json_str);
+
+/**
+ * Pretty-print a JSON string with 2-space indentation.
+ *
+ * @param json_str  Input JSON (compact or already formatted).
+ * @param out       Output buffer. May be NULL for size query.
+ * @param out_len   Capacity of out.
+ * @return          Bytes needed (including NUL), or -1 on parse error.
+ *                  If return > out_len, resize and call again.
+ */
+int ion7_json_format(const char* json_str, char* out, size_t out_len);
+
+/**
+ * Merge two JSON objects using RFC 7396 JSON Merge Patch semantics.
+ * Keys in overlay overwrite matching keys in base; null values delete keys.
+ * Useful for building tool schemas and config objects dynamically.
+ *
+ * @param base     Base JSON object string.
+ * @param overlay  Patch JSON object string (applied on top of base).
+ * @param out      Output buffer for the merged JSON.
+ * @param out_len  Capacity of out.
+ * @return         Bytes needed (including NUL), or -1 on parse error.
+ */
+int ion7_json_merge(const char* base, const char* overlay,
+                     char* out, size_t out_len);
+
 #ifdef __cplusplus
 }
 #endif
