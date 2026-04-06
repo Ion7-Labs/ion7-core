@@ -262,6 +262,39 @@ struct llama_context* ion7_embedding_context_create(
     int32_t  n_threads,
     int      pooling);
 
+/**
+ * Create an inference context with an eval callback.
+ *
+ * Same parameters as ion7_context_create, plus:
+ * @param cb_eval           Called for every tensor computed during a forward
+ *                          pass.  When ask=true: return true to compute the
+ *                          tensor, false to skip.  When ask=false: tensor data
+ *                          is ready and can be inspected / copied.
+ * @param cb_eval_user_data Opaque pointer forwarded to cb_eval as ud.
+ *                          May be NULL when the callback uses Lua closures.
+ *
+ * Use ion7_tensor_* helpers to safely inspect tensors inside the callback.
+ * Useful for activation extraction (control vector building).
+ */
+struct llama_context* ion7_context_create_with_cb(
+    struct llama_model* model,
+    uint32_t n_ctx,
+    uint32_t n_batch,
+    uint32_t n_ubatch,
+    uint32_t n_seq_max,
+    int32_t  n_threads,
+    int32_t  n_threads_batch,
+    int      flash_attn,
+    int      offload_kqv,
+    int      op_offload,
+    int      no_perf,
+    int      type_k,
+    int      type_v,
+    int      swa_full,
+    int      kv_unified,
+    void*    cb_eval,
+    void*    cb_eval_user_data);
+
 /** Free a context. Safe to call with NULL. */
 void ion7_context_free(struct llama_context* ctx);
 
@@ -846,6 +879,34 @@ int ion7_cvec_apply(struct llama_context* ctx,
 
 /** Remove the currently applied control vector. No-op if none is active. */
 void ion7_cvec_clear(struct llama_context* ctx);
+
+/* =========================================================================
+ * ── Tensor inspection (for use inside cb_eval callbacks) ─────────────────
+ * ======================================================================= */
+
+/** Name of a GGML tensor (empty string if t is NULL). */
+const char* ion7_tensor_name(void* t);
+
+/** GGML type enum value of the tensor (-1 if t is NULL). */
+int ion7_tensor_type(void* t);
+
+/** Size along dimension dim (0..3). Returns 0 for out-of-range dim or NULL. */
+int64_t ion7_tensor_ne(void* t, int dim);
+
+/** Total byte size of the tensor (0 if t is NULL). */
+size_t ion7_tensor_nbytes(void* t);
+
+/**
+ * Copy tensor data into a pre-allocated F32 CPU buffer.
+ *
+ * Handles tensors on any backend (CUDA, Metal, CPU) via
+ * ggml_backend_tensor_get, and converts F16/BF16 → F32 automatically.
+ *
+ * @param dst        Destination float buffer (CPU).
+ * @param dst_count  Capacity of dst in floats.
+ * @return           Number of floats written, or -1 on error / unsupported type.
+ */
+int ion7_tensor_copy_f32(void* t, float* dst, size_t dst_count);
 
 /* =========================================================================
  * ── NUMA topology ────────────────────────────────────────────────────────

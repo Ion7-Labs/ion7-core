@@ -7,6 +7,7 @@
 #include "ion7_bridge.h"
 #include "llama.h"
 #include "ggml-cpu.h"
+#include "ggml-backend.h"
 #include "bridge_internal.hpp"
 
 /* libcommon utilities */
@@ -128,6 +129,59 @@ int ion7_cvec_apply(struct llama_context* ctx, const float* data, size_t len, in
 void ion7_cvec_clear(struct llama_context* ctx)
 {
     if (ctx) llama_set_adapter_cvec(ctx, nullptr, 0, 0, -1, -1);
+}
+
+/* =========================================================================
+ * ── Tensor inspection (for cb_eval callbacks) ────────────────────────────
+ * ======================================================================= */
+
+const char* ion7_tensor_name(void* t)
+{
+    return t ? ((const struct ggml_tensor*)t)->name : "";
+}
+
+int ion7_tensor_type(void* t)
+{
+    return t ? (int)((const struct ggml_tensor*)t)->type : -1;
+}
+
+int64_t ion7_tensor_ne(void* t, int dim)
+{
+    if (!t || dim < 0 || dim >= 4) return 0;
+    return ((const struct ggml_tensor*)t)->ne[dim];
+}
+
+size_t ion7_tensor_nbytes(void* t)
+{
+    return t ? ggml_nbytes((const struct ggml_tensor*)t) : 0;
+}
+
+/* Copy tensor data to a pre-allocated F32 CPU buffer.
+ * Handles GPU tensors via ggml_backend_tensor_get, converts F16/BF16 → F32.
+ * Returns number of floats written, or -1 on error / unsupported type. */
+int ion7_tensor_copy_f32(void* t, float* dst, size_t dst_count)
+{
+    if (!t || !dst || dst_count == 0) return -1;
+    const struct ggml_tensor* tensor = (const struct ggml_tensor*)t;
+    const int64_t n_elem = ggml_nelements(tensor);
+    if (n_elem <= 0 || (size_t)n_elem > dst_count) return -1;
+
+    const enum ggml_type type = tensor->type;
+    if (type == GGML_TYPE_F32) {
+        ggml_backend_tensor_get(tensor, dst, 0, (size_t)n_elem * sizeof(float));
+        return (int)n_elem;
+    } else if (type == GGML_TYPE_F16) {
+        std::vector<ggml_fp16_t> tmp((size_t)n_elem);
+        ggml_backend_tensor_get(tensor, tmp.data(), 0, (size_t)n_elem * sizeof(ggml_fp16_t));
+        for (int64_t i = 0; i < n_elem; i++) dst[i] = ggml_fp16_to_fp32(tmp[i]);
+        return (int)n_elem;
+    } else if (type == GGML_TYPE_BF16) {
+        std::vector<ggml_bf16_t> tmp((size_t)n_elem);
+        ggml_backend_tensor_get(tensor, tmp.data(), 0, (size_t)n_elem * sizeof(ggml_bf16_t));
+        for (int64_t i = 0; i < n_elem; i++) dst[i] = ggml_bf16_to_fp32(tmp[i]);
+        return (int)n_elem;
+    }
+    return -1;
 }
 
 /* =========================================================================

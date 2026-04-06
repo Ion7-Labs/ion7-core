@@ -88,6 +88,14 @@ struct llama_context* ion7_context_create(
 struct llama_context* ion7_embedding_context_create(
     struct llama_model* model, uint32_t n_ctx, uint32_t n_seq_max,
     int32_t n_threads, int pooling);
+struct llama_context* ion7_context_create_with_cb(
+    struct llama_model* model,
+    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch,
+    uint32_t n_seq_max,
+    int32_t n_threads, int32_t n_threads_batch,
+    int flash_attn, int offload_kqv, int op_offload,
+    int no_perf, int type_k, int type_v, int swa_full, int kv_unified,
+    void* cb_eval, void* cb_eval_user_data);
 void     ion7_context_free(struct llama_context* ctx);
 
 /* ---- KV cache ----------------------------------------------------------- */
@@ -269,6 +277,13 @@ int  ion7_cvec_apply(struct llama_context* ctx,
                       const float* data, size_t len,
                       int32_t n_embd, int32_t il_start, int32_t il_end);
 void ion7_cvec_clear(struct llama_context* ctx);
+
+/* ---- Tensor inspection (for cb_eval callbacks) ------------------------- */
+const char* ion7_tensor_name    (void* t);
+int         ion7_tensor_type    (void* t);
+int64_t     ion7_tensor_ne      (void* t, int dim);
+size_t      ion7_tensor_nbytes  (void* t);
+int         ion7_tensor_copy_f32(void* t, float* dst, size_t dst_count);
 
 /* ---- NUMA topology ----------------------------------------------------- */
 void ion7_numa_init(int strategy);

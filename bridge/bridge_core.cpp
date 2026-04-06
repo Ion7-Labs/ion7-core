@@ -225,6 +225,28 @@ struct llama_context* ion7_context_create(struct llama_model* model, uint32_t n_
     return llama_init_from_model(model, p);
 }
 
+struct llama_context* ion7_context_create_with_cb(struct llama_model* model, uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max, int32_t n_threads, int32_t n_threads_batch, int flash_attn, int offload_kqv, int op_offload, int no_perf, int type_k, int type_v, int swa_full, int kv_unified, void* cb_eval, void* cb_eval_user_data)
+{
+    struct llama_context_params p = llama_context_default_params();
+    p.n_ctx           = n_ctx    ? n_ctx    : 4096;
+    p.n_batch         = n_batch  ? n_batch  : 2048;
+    p.n_ubatch        = n_ubatch ? n_ubatch : p.n_batch;
+    p.n_seq_max       = n_seq_max ? n_seq_max : 1;
+    p.n_threads       = n_threads > 0       ? n_threads       : 4;
+    p.n_threads_batch = n_threads_batch > 0 ? n_threads_batch : p.n_threads * 2;
+    p.flash_attn_type = (type_k != 1 || flash_attn) ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_AUTO;
+    p.offload_kqv  = (bool)offload_kqv;
+    p.op_offload   = (bool)op_offload;
+    p.no_perf      = (bool)no_perf;
+    p.swa_full     = (bool)swa_full;
+    p.kv_unified   = (bool)kv_unified;
+    if (type_k > 0) p.type_k = (enum ggml_type)type_k;
+    if (type_v > 0) p.type_v = (enum ggml_type)type_v;
+    p.cb_eval           = (ggml_backend_sched_eval_callback)cb_eval;
+    p.cb_eval_user_data = cb_eval_user_data;
+    return llama_init_from_model(model, p);
+}
+
 struct llama_context* ion7_embedding_context_create(struct llama_model* model, uint32_t n_ctx, uint32_t n_seq_max, int32_t n_threads, int pooling)
 {
     struct llama_context_params p = llama_context_default_params();
