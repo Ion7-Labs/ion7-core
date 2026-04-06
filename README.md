@@ -94,14 +94,37 @@ When llama.cpp changes its structs or param signatures, only the bridge needs re
 - Fluent builder API: `Sampler.chain():top_k(40):temp(0.8):dist():build()`
 - All llama.cpp samplers: greedy, dist, top-k, top-p, min-p, typical, XTC, mirostat v1/v2, DRY, penalties, grammar (GBNF), logit bias, adaptive-p, top-n-sigma
 - **Custom Lua samplers**: write sampling logic in pure Lua, inject it into the chain via `ffi.cast` callbacks
+- **Advanced sampler (`common_sampler`)**: lazy grammar (CRANE-style), grammar trigger words/tokens, seed tracking, candidate inspection
+
+**Speculative decoding**
+- Four strategies: simple n-grams, n-gram map, LRU n-gram cache (≈ Cacheback), external draft model
+- Automatic token acceptance and stats reporting
+- Zero extra VRAM for n-gram modes
+
+**Chat & output parsing**
+- Native Jinja2 chat templates via `common_chat_templates` — `enable_thinking`, tool schemas, `tool_choice`, parallel calls
+- `ion7_chat_parse`: parse raw model output into structured `content` / `thinking` / `tool_calls`
+- Reasoning budget: hard token limit on `<think>` blocks via sampler integration
+- JSON Schema → GBNF grammar compiler (C++ backend, handles `$ref`, `allOf`, `anyOf`)
 
 **System**
 - Shared CPU threadpool across contexts
 - LoRA adapter loading and hot-swapping
-- Activation steering (control vectors)
+- Activation steering (control vectors) with `ion7_cvec_apply`
 - Full performance counters
 - Embedding contexts with pooling (mean, cls, last, rank)
 - Chat template rendering (Jinja-compatible, model-embedded or custom)
+- NUMA topology control (`ion7_numa_init`)
+- CPU SIMD capability introspection (`ion7_cpu_caps`)
+- Log routing to file, timestamp injection, log level filtering
+- Context warmup (JIT GPU kernel pre-compilation)
+
+**Utilities**
+- Streaming-safe UTF-8 helpers (sequence length, completeness check)
+- Partial regex matching (`ion7_regex_new/search`)
+- Base64 encode/decode
+- JSON validate / pretty-print / RFC 7396 merge-patch
+- Pure Lua JSON library (`ion7.vendor.json`) — encoder + decoder, zero deps
 
 ---
 
@@ -278,19 +301,26 @@ local vec = embed_ctx:embedding(0, model:n_embd())
 ```
 ion7-core
 ├── bridge/
-│   ├── ion7_bridge.cpp   - C++17 shim with libcommon (compile once, insulates from llama.cpp churn)
-│   └── ion7_bridge.h     - stable public C API (extern "C")
-└── src/ion7/core/
-    ├── init.lua           - ion7.init(), ion7.shutdown(), ion7.capabilities()
-    ├── model.lua          - Model.load(), model:context(), model:vocab()
-    ├── context.lua        - decode, KV cache, logits, state persistence
-    ├── vocab.lua          - tokenize, detokenize, chat templates, special tokens
-    ├── sampler.lua        - fluent sampler chain builder
-    ├── custom_sampler.lua - Lua-native custom samplers via ffi.cast
-    ├── threadpool.lua     - shared CPU threadpool
-    └── ffi/
-        ├── loader.lua     - library resolution and backend init
-        └── types.lua      - all llama.cpp cdef declarations
+│   ├── bridge_core.cpp      - pure llama.h layer (model, context, KV, state, sampler, threadpool)
+│   ├── bridge_common.cpp    - libcommon layer (chat templates, common_sampler, speculative, chat parse)
+│   ├── bridge_training.cpp  - llama_opt training pipeline
+│   ├── bridge_utils.cpp     - utilities (UTF-8, JSON, regex, cvec, NUMA, CPU caps, log, base64)
+│   ├── bridge_internal.hpp  - private shared header (log globals, ctx_mem helper)
+│   └── ion7_bridge.h        - stable public C API (extern "C"), 83 functions
+└── src/ion7/
+    ├── core/
+    │   ├── init.lua           - ion7.init(), ion7.shutdown(), ion7.capabilities()
+    │   ├── model.lua          - Model.load(), model:context(), model:vocab()
+    │   ├── context.lua        - decode, KV cache, logits, state persistence
+    │   ├── vocab.lua          - tokenize, detokenize, chat templates, special tokens
+    │   ├── sampler.lua        - fluent sampler chain builder
+    │   ├── custom_sampler.lua - Lua-native custom samplers via ffi.cast
+    │   ├── threadpool.lua     - shared CPU threadpool
+    │   └── ffi/
+    │       ├── loader.lua     - library resolution and backend init
+    │       └── types.lua      - all llama.cpp cdef declarations
+    └── vendor/
+        └── json.lua           - pure Lua JSON encoder/decoder, zero deps
 ```
 
 The public API contract (stable across 1.x minor versions) is documented in [`spec/PUBLIC_API.md`](spec/PUBLIC_API.md).

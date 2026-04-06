@@ -22,7 +22,7 @@ This document covers everything needed to build ion7-core and its dependencies f
 
 | Tool | Minimum version | Notes |
 |---|---|---|
-| GCC or Clang | GCC 11 / Clang 14 | C11 support required |
+| GCC or Clang | GCC 11 / Clang 14 | **C++17** support required (bridge is C++17) |
 | CMake | 3.21 | For building llama.cpp |
 | LuaJIT | 2.1 | Must be 2.1 - LuaJIT 2.0 lacks required FFI features |
 | Git | Any | For cloning |
@@ -147,13 +147,27 @@ cd ion7-core
 make build LIB_DIR=/path/to/llama.cpp/build/bin
 ```
 
-This compiles `bridge/ion7_bridge.so` - the stable C shim between LuaJIT and libllama.
+This compiles `bridge/ion7_bridge.so` from four focused translation units (`bridge_core.cpp`, `bridge_common.cpp`, `bridge_training.cpp`, `bridge_utils.cpp`) and links against `libllama.so` and `libcommon.a`.
+
+`libcommon.a` is expected at `$(LIB_DIR)/../common/libcommon.a` (the default CMake output location). Override with `COMMON_LIB_DIR` if yours is elsewhere:
+
+```bash
+make build LIB_DIR=/path/to/llama.cpp/build/bin \
+           COMMON_LIB_DIR=/path/to/llama.cpp/build/common
+```
+
+If your llama.cpp source and build trees are in different directories (e.g. CI):
+
+```bash
+make build LIB_DIR=/tmp/llama-build/bin \
+           LLAMA_SRC=/tmp/llama-src
+```
 
 ### Verify the build
 
 ```bash
 ls -lh bridge/ion7_bridge.so
-# Should output something like: -rwxr-xr-x 1 user user 48K Apr 2026 bridge/ion7_bridge.so
+# Should output something like: -rwxr-xr-x 1 user user 400K Apr 2026 bridge/ion7_bridge.so
 ```
 
 ---
