@@ -286,6 +286,43 @@ function Context:decode(tokens, n_tokens, seq_id, pos_offset)
     return last_chunk
 end
 
+--- Decode multiple tokens with ALL logits enabled (for speculative verification).
+---
+--- Unlike decode(), which enables logits only on the last token, decode_multi
+--- enables logits on every position. Required for speculative decoding: after
+--- the call, sampler:sample(ctx:ptr(), i) is valid for i = 0 .. n-1.
+---
+--- @param  tokens  table   Lua 1-based array of token IDs.
+--- @param  seq_id  number? Sequence ID (default: 0).
+--- @error  If decoding fails.
+function Context:decode_multi(tokens, seq_id)
+    local n    = #tokens
+    assert(n > 0, "[ion7.core.context] decode_multi: empty token list")
+    seq_id     = seq_id or 0
+    local lib  = self._lib
+    local ffi  = self._ffi
+    local base = self._n_past
+
+    local batch = lib.llama_batch_init(n, 0, 1)
+    for i = 0, n - 1 do
+        batch.token[i]     = tokens[i + 1]
+        batch.pos[i]       = base + i
+        batch.n_seq_id[i]  = 1
+        batch.seq_id[i][0] = seq_id
+        batch.logits[i]    = 1   -- all positions need logits for verification
+    end
+    batch.n_tokens = n
+
+    local ret = lib.llama_decode(self._ptr, batch)
+    lib.llama_batch_free(batch)
+
+    if ret ~= 0 then
+        if ret == 1 then error("[ion7.core.context] KV cache is full", 2) end
+        error(string.format("[ion7.core.context] decode_multi failed: %d", ret), 2)
+    end
+    self._n_past = base + n
+end
+
 --- Decode a single token (used during generation loop).
 --- Uses a pre-allocated batch (set up in Context.new) to avoid
 --- one malloc+free per token.
