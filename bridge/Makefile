@@ -24,11 +24,17 @@
 #
 # Bridge v2.0 — C++ build with libcommon integration.
 # Requires: libllama.so (LIB_DIR) + libcommon.a (COMMON_LIB_DIR)
+#
+# Source layout (split from monolithic ion7_bridge.cpp):
+#   bridge_core.cpp     — llama.h layer (model, context, KV, state, samplers)
+#   bridge_common.cpp   — libcommon layer (templates, csampler, speculative, chat parse)
+#   bridge_training.cpp — llama_opt training pipeline
+#   bridge_utils.cpp    — standalone utilities (utf8, json, regex, cvec, numa, ...)
 
 CXX        ?= g++
 LIB_DIR    ?= /usr/local/lib
 BRIDGE_SO  := ion7_bridge.so
-BRIDGE_SRC := ion7_bridge.cpp
+BRIDGE_SRCS := bridge_core.cpp bridge_common.cpp bridge_training.cpp bridge_utils.cpp
 
 # Include path resolution.
 #
@@ -73,12 +79,18 @@ endif
 
 all: $(BRIDGE_SO)
 
-$(BRIDGE_SO): $(BRIDGE_SRC) ion7_bridge.h
-	@echo "[ion7-core] compiling bridge (C++17 + libcommon)..."
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $(BRIDGE_SO) $(BRIDGE_SRC)
+BRIDGE_OBJS := $(BRIDGE_SRCS:.cpp=.o)
+
+# Compile each translation unit separately for faster incremental rebuilds
+%.o: %.cpp ion7_bridge.h bridge_internal.hpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BRIDGE_SO): $(BRIDGE_OBJS)
+	@echo "[ion7-core] linking bridge (C++17 + libcommon)..."
+	$(CXX) $(LDFLAGS) -o $(BRIDGE_SO) $(BRIDGE_OBJS)
 	@echo "[ion7-core] bridge ready → $(BRIDGE_SO)"
 
 clean:
-	rm -f $(BRIDGE_SO)
+	rm -f $(BRIDGE_SO) $(BRIDGE_OBJS)
 
 .PHONY: all clean
