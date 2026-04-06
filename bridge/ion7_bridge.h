@@ -2,7 +2,7 @@
  * ion7_bridge.h - Public API of the ion7-core C bridge.
  *
  * Copyright (C) 2026 Ion7 Project Contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * This file is part of ion7-core.
  *

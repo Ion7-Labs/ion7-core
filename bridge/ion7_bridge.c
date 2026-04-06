@@ -2,7 +2,7 @@
  * ion7_bridge.c - Stable C shim between ion7-core (LuaJIT) and libllama.so.
  *
  * Copyright (C) 2026 Ion7 Project Contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * This file is part of ion7-core.
  *
