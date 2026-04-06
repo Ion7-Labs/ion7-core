@@ -278,8 +278,8 @@ local vec = embed_ctx:embedding(0, model:n_embd())
 ```
 ion7-core
 ├── bridge/
-│   ├── ion7_bridge.c     - C shim (compile once, insulates from llama.cpp churn)
-│   └── ion7_bridge.h     - stable public C API
+│   ├── ion7_bridge.cpp   - C++17 shim with libcommon (compile once, insulates from llama.cpp churn)
+│   └── ion7_bridge.h     - stable public C API (extern "C")
 └── src/ion7/core/
     ├── init.lua           - ion7.init(), ion7.shutdown(), ion7.capabilities()
     ├── model.lua          - Model.load(), model:context(), model:vocab()

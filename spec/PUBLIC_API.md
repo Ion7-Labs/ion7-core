@@ -448,13 +448,16 @@ not versioned here - they track llama.h master directly.
 | State | `ion7_state_size/get/set/save_file/load_file` + seq variants |
 | LoRA | `ion7_lora_load/free/apply/remove/meta_val` |
 | Perf | `ion7_perf_print/reset/get` |
-| Chat | `ion7_chat_apply_template` (version-stable) |
+| Chat templates | `ion7_chat_templates_init/free/apply/support_thinking` (Jinja2 native, `enable_thinking` support) |
+| Reasoning budget | `ion7_reasoning_budget_init` (hard token limit inside `<think>` blocks) |
+| Training | `ion7_opt_init/free`, `ion7_opt_dataset_create/free/epoch` (LoRA/fine-tune via llama_opt) |
 | Threadpool | `ion7_threadpool_create/free/pause/resume/attach/detach` |
 | Custom sampler | `ion7_sampler_create` + callback typedefs |
 | VRAM fit | `ion7_params_fit` |
 
 **llama.h coverage: 213/224 functions (95%)**  
-Excluded: `llama_opt_*` (training), `llama_model_init_from_user` (needs `gguf_context*`).
+Excluded: `llama_model_init_from_user` (needs `gguf_context*`).  
+Note: training (`llama_opt_*`) is exposed via libcommon wrappers (`ion7_opt_*`) rather than directly.
 
 ---
 
