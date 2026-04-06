@@ -1,5 +1,5 @@
 --- @module ion7.core
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 --- Ion7 Core - Silicon-level LuaJIT runtime for llama.cpp.
 ---
 --- This is the foundation layer of the Ion7 ecosystem.

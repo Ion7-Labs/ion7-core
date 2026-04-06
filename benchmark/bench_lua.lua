@@ -2,7 +2,7 @@
 
 ---
 --- Copyright (C) 2026 Ion7 Project Contributors
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 ---
 
 --- Measures the same operations as bench_python.py so results are directly

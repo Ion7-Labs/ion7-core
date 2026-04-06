@@ -1,5 +1,5 @@
 --- @module ion7.core.ffi.loader
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 ---
 --- Loads libllama.so and ion7_bridge.so, initialises the backend.
 ---

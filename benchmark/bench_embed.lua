@@ -1,7 +1,7 @@
 #!/usr/bin/env luajit
 ---
 --- Copyright (C) 2026 Ion7 Project Contributors
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 ---
 
 --- ion7-core embedding benchmark.

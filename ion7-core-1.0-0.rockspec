@@ -14,7 +14,7 @@ description = {
         No business logic - just the metal.
     ]],
     homepage = "https://github.com/Ion7-Labs/ion7-core",
-    license  = "AGPL-3.0-or-later",
+    license  = "MIT-or-later",
 }
 
 dependencies = {

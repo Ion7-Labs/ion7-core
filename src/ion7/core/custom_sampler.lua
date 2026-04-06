@@ -1,5 +1,5 @@
 --- @module ion7.core.custom_sampler
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 --- Write sampling logic in pure Lua and plug it into the llama.cpp chain.
 ---
 --- Uses the bridge's ion7_sampler_create() which constructs the llama_sampler_i

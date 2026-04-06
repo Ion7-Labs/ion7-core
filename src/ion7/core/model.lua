@@ -1,5 +1,5 @@
 --- @module ion7.core.model
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 --- Top-level model object: loading, context creation, vocabulary, metadata.
 ---
 --- A Model wraps a llama_model* loaded from a GGUF file. It is the root

@@ -1,5 +1,5 @@
 --- @module ion7.core.threadpool
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 --- CPU threadpool for llama.cpp contexts.
 ---
 --- By default llama.cpp creates one internal threadpool per context.

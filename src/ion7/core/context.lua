@@ -1,5 +1,5 @@
 --- @module ion7.core.context
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 --- Inference context: decoding, KV cache management, state persistence.
 ---
 --- A Context wraps a llama_context* created by ion7_context_create().

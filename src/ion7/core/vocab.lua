@@ -1,5 +1,5 @@
 --- @module ion7.core.vocab
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 --- Vocabulary operations: tokenisation, detokenisation, chat templates.
 ---
 --- A Vocab wraps a `const llama_vocab*` obtained from a loaded model.

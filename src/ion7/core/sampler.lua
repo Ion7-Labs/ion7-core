@@ -1,5 +1,5 @@
 --- @module ion7.core.sampler
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 --- Composable sampler chains for token sampling.
 ---
 --- Uses the Builder pattern: call Sampler.chain() to start, chain method

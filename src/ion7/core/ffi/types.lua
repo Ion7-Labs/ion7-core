@@ -1,5 +1,5 @@
 --- @module ion7.core.ffi.types
---- SPDX-License-Identifier: AGPL-3.0-or-later
+--- SPDX-License-Identifier: MIT
 ---
 --- LuaJIT FFI declarations for the llama.cpp public C API.
 --- Covers the non-deprecated public surface of llama.h (verified April 2026).

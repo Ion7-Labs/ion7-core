@@ -2,8 +2,7 @@
 
 [![CI](https://github.com/Ion7-Labs/ion7-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Ion7-Labs/ion7-core/actions/workflows/ci.yml)
 [![Release](https://github.com/Ion7-Labs/ion7-core/actions/workflows/release.yml/badge.svg)](https://github.com/Ion7-Labs/ion7-core/releases)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![License: Commercial](https://img.shields.io/badge/License-Commercial-green.svg)](#-licensing)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![LuaJIT](https://img.shields.io/badge/LuaJIT-2.1-orange.svg)](https://luajit.org/)
 [![llama.cpp](https://img.shields.io/badge/llama.cpp-master-red.svg)](https://github.com/ggml-org/llama.cpp)
 [![Version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](https://github.com/Ion7-Labs/ion7-core/releases)
@@ -312,21 +311,9 @@ The public API contract (stable across 1.x minor versions) is documented in [`sp
 
 ---
 
-## 📄 Licensing
+## Licensing
 
-ion7-core is dual-licensed.
-
-### Open Source - AGPLv3
-
-Free to use under the [GNU Affero General Public License v3](LICENSE). This means: if you use ion7-core in a network-accessible service or product, you must release your source code under the same license.
-
-### Commercial License
-
-If you want to integrate ion7-core into a proprietary product, closed-source game, or SaaS without AGPLv3 obligations, a commercial license is available.
-
-**→ [Contact for commercial licensing](mailto:5inq@kiji.dev)**
-
-Commercial licenses cover: single project use, team use, OEM embedding. Pricing on request.
+MIT License — free to use in any project, open source or commercial.
 
 ---
 
