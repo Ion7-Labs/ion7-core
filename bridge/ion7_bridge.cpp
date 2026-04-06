@@ -20,10 +20,10 @@
  * along with ion7-core. If not, see <https://www.gnu.org/licenses/>.
  *
  * ──────────────────────────────────────────────────────────────────────────
- * Migrated from C to C++ (ion7-core v2.0) to enable libcommon integration.
+ * Migrated from C to C++ (ion7-core v1.1) to enable libcommon integration.
  * The public API is unchanged — all symbols remain extern "C".
  *
- * New in v2.0 (requires libcommon):
+ * New in v1.1 (requires libcommon):
  *   - ion7_chat_templates_*   : Jinja2 templates with enable_thinking support
  *   - ion7_reasoning_budget_* : hard token budget inside <think> blocks
  *   - ion7_opt_*              : training / fine-tuning via llama_opt API
@@ -53,7 +53,7 @@
  * Version & info
  * ======================================================================= */
 
-const char* ion7_bridge_version(void) { return "2.0.0"; }
+const char* ion7_bridge_version(void) { return "1.1.0"; }
 const char* ion7_llama_info(void)     { return llama_print_system_info(); }
 
 /* =========================================================================
@@ -580,7 +580,7 @@ int ion7_model_quantize(
 
 /* =========================================================================
  * ── C++ EXTENSIONS (libcommon) ───────────────────────────────────────────
- * All functions below require libcommon and are new in bridge v2.0.
+ * All functions below require libcommon and are new in bridge v1.1.
  * They are still exported as extern "C" (declared in ion7_bridge.h).
  * ======================================================================= */
 
