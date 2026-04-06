@@ -72,7 +72,14 @@ int32_t ion7_chat_templates_apply(ion7_chat_templates_t* t, const char** roles, 
         inputs.messages.push_back(std::move(msg));
     }
 
-    common_chat_params result = common_chat_templates_apply((const common_chat_templates*)t, inputs);
+    common_chat_params result;
+    try {
+        result = common_chat_templates_apply((const common_chat_templates*)t, inputs);
+    } catch (const std::exception&) {
+        return -2;  // template application failed (e.g. system-only message)
+    } catch (...) {
+        return -2;
+    }
 
     int32_t needed = (int32_t)result.prompt.size() + 1;
     if (buf && buf_len >= needed) {

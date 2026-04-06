@@ -240,7 +240,8 @@ end
 --- @return number  Last chunk size (for sample index calculation).
 --- @error  If decoding fails.
 function Context:decode(tokens, n_tokens, seq_id, pos_offset)
-    n_tokens   = n_tokens   or #tokens
+    local is_lua_table = type(tokens) == "table"
+    n_tokens   = n_tokens   or (is_lua_table and #tokens or 0)
     seq_id     = seq_id     or 0
     pos_offset = pos_offset or self._n_past
 
@@ -256,7 +257,8 @@ function Context:decode(tokens, n_tokens, seq_id, pos_offset)
         local batch    = lib.llama_batch_init(chunk, 0, 1)
 
         for i = 0, chunk - 1 do
-            batch.token[i]     = tokens[done + i + 1]  -- 1-based Lua table
+            -- Lua tables are 1-based; C FFI pointers (from vocab:tokenize) are 0-based
+            batch.token[i]     = is_lua_table and tokens[done + i + 1] or tokens[done + i]
             batch.pos[i]       = pos_offset + done + i
             batch.n_seq_id[i]  = 1
             batch.seq_id[i][0] = seq_id
