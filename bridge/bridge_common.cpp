@@ -1,4 +1,4 @@
-/* bridge_common.cpp — libcommon C++ layer (chat templates, sampling, speculative, training) */
+/* bridge_common.cpp - libcommon C++ layer (chat templates, sampling, speculative, training) */
 /*
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
@@ -6,7 +6,7 @@
 
 #include "ion7_bridge.h"
 
-/* libcommon — C++ layer */
+/* libcommon - C++ layer */
 #include "chat.h"
 #include "common.h"
 #include "reasoning-budget.h"
@@ -24,7 +24,11 @@
 
 ion7_chat_templates_t* ion7_chat_templates_init(const struct llama_model* model, const char* tmpl_override)
 {
-    auto ptr = common_chat_templates_init(model, tmpl_override ? tmpl_override : "");
+    // API: common_chat_templates_init(model, override, bos_override="", eos_override="")
+    auto ptr = common_chat_templates_init(model,
+        tmpl_override ? tmpl_override : "",
+        "",   // bos_token_override - use model default
+        "");  // eos_token_override - use model default
     return (ion7_chat_templates_t*)ptr.release();
 }
 
@@ -40,7 +44,7 @@ int ion7_chat_templates_support_thinking(const ion7_chat_templates_t* t)
 }
 
 /*
- * ion7_chat_templates_apply — apply a Jinja2 template with advanced options.
+ * ion7_chat_templates_apply - apply a Jinja2 template with advanced options.
  *
  * roles[]    : array of n_msgs role strings ("system", "user", "assistant")
  * contents[] : array of n_msgs content strings
@@ -81,7 +85,7 @@ int32_t ion7_chat_templates_apply(ion7_chat_templates_t* t, const char** roles, 
  * ── Reasoning Budget ──────────────────────────────────────────────────── */
 
 /*
- * ion7_reasoning_budget_init — create a sampler that hard-limits the number
+ * ion7_reasoning_budget_init - create a sampler that hard-limits the number
  * of tokens generated inside a <think> block.
  *
  * model   : used to tokenize the special tokens
@@ -209,7 +213,13 @@ void ion7_csampler_reset(ion7_csampler_t* s)
 int32_t ion7_csampler_last(const ion7_csampler_t* s)
 {
     if (!s) return -1;
-    return common_sampler_last(s->smpl);
+    /* common_sampler_last throws when the internal ring buffer is empty
+     * Guard so callers get -1 instead of a crash. */
+    try {
+        return common_sampler_last(s->smpl);
+    } catch (...) {
+        return -1;
+    }
 }
 
 uint32_t ion7_csampler_get_seed(const ion7_csampler_t* s)

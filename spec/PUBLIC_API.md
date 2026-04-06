@@ -470,10 +470,45 @@ The bridge is split across four translation units for incremental builds. All sy
 | Base64 | `bridge_utils` | `ion7_base64_encode/decode` |
 | JSON utilities | `bridge_utils` | `ion7_json_validate/format/merge` (RFC 7396 merge-patch) |
 
-**Total bridge API: 83 functions**  
+**Total bridge API: 84 functions**  
 **llama.h coverage: 213/224 functions (95%)**  
 Excluded: `llama_model_init_from_user` (needs `gguf_context*`).  
 Note: training (`llama_opt_*`) is exposed via libcommon wrappers (`ion7_opt_*`) rather than directly.
+
+### Constants (`types.constants`)
+
+Accessible via `Loader.instance().C.<name>` or the `C` table in bridge tests.
+
+#### Speculative decoding types — `ion7_speculative_init` `type` parameter
+
+Must match `common_speculative_type` enum in `common/common.h`.
+
+| Constant | Value | Description |
+|---|---|---|
+| `SPEC_NONE` | `0` | No speculative decoding |
+| `SPEC_DRAFT` | `1` | Separate draft model |
+| `SPEC_EAGLE3` | `2` | EAGLE-3 speculative heads |
+| `SPEC_NGRAM_SIMPLE` | `3` | Self-speculative via n-gram history |
+| `SPEC_NGRAM_MAP_K` | `4` | N-gram with prediction map |
+| `SPEC_NGRAM_CACHE` | `7` | LRU n-gram cache (≈ Cacheback) — best zero-VRAM option |
+
+#### Regex match results — `ion7_regex_search` return value
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `REGEX_NO_MATCH` | `0` | No match, not even a prefix |
+| `REGEX_PARTIAL` | `1` | Input is a valid prefix of a match |
+| `REGEX_FULL` | `2` | Complete match found |
+
+#### NUMA strategies — `ion7_numa_init` `strategy` parameter
+
+| Constant | Value | Description |
+|---|---|---|
+| `NUMA_DISABLED` | `0` | No NUMA awareness (default) |
+| `NUMA_DISTRIBUTE` | `1` | Round-robin across all NUMA nodes |
+| `NUMA_ISOLATE` | `2` | Use only the current node (best for single-socket) |
+| `NUMA_NUMACTL` | `3` | Read strategy from `numactl` config |
+| `NUMA_MIRROR` | `4` | Replicate data across all nodes |
 
 ---
 

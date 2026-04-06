@@ -456,7 +456,7 @@ struct llama_sampler* ion7_sampler_create(
 void ion7_print_struct_sizes(void);
 
 /* =========================================================================
- * ── C++ EXTENSIONS (libcommon — bridge v2.0) ─────────────────────────────
+ * ── C++ EXTENSIONS (libcommon - bridge v2.0) ─────────────────────────────
  * Requires libcommon. Available when ION7_BRIDGE_VERSION >= "2.0.0".
  * ======================================================================= */
 
@@ -593,7 +593,7 @@ float ion7_opt_epoch(
 void ion7_context_warmup(struct llama_context* ctx);
 
 /* =========================================================================
- * ── common_sampler — advanced sampling (DRY, XTC, grammar_lazy, ...) ────
+ * ── common_sampler - advanced sampling (DRY, XTC, grammar_lazy, ...) ────
  * ======================================================================= */
 
 /**
@@ -814,7 +814,7 @@ void ion7_regex_free(ion7_regex_t* r);
  * Match the pattern against text.
  *
  * When partial=1, also returns 1 for text that is a valid prefix of a future
- * full match — used in streaming to decide whether to buffer more tokens.
+ * full match - used in streaming to decide whether to buffer more tokens.
  *
  * @return  0 = no match (can stop buffering),
  *          1 = partial prefix match (keep buffering),
@@ -855,7 +855,7 @@ void ion7_cvec_clear(struct llama_context* ctx);
  * Configure NUMA memory policy. Call before ion7_backend_init for best effect.
  *
  * @param strategy  0=disabled, 1=distribute (round-robin across nodes),
- *                  2=isolate (local node only — best for single-socket),
+ *                  2=isolate (local node only - best for single-socket),
  *                  3=numactl (follow numactl configuration),
  *                  4=mirror (replicate on all nodes).
  */

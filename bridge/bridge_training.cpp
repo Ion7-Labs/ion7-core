@@ -1,4 +1,4 @@
-/* bridge_training.cpp — training / fine-tuning via llama_opt API */
+/* bridge_training.cpp - training / fine-tuning via llama_opt API */
 /*
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
@@ -6,7 +6,7 @@
 
 #include "ion7_bridge.h"
 
-/* libcommon — C++ layer */
+/* libcommon - C++ layer */
 #include "common.h"
 
 #include <cstdint>
@@ -28,7 +28,7 @@ static ggml_opt_optimizer_params _ion7_lr_callback(void* ud)
 }
 
 /*
- * ion7_opt_init — initialise training on a context.
+ * ion7_opt_init - initialise training on a context.
  *
  * optimizer : 0 = AdamW (recommended), 1 = SGD
  * lr        : learning rate (e.g. 1e-4 for LoRA, 1e-5 for full fine-tune)
@@ -58,7 +58,7 @@ void ion7_opt_free(ion7_opt_state_t* state)
 }
 
 /*
- * ion7_opt_dataset_create — build a training dataset from a token array.
+ * ion7_opt_dataset_create - build a training dataset from a token array.
  *
  * tokens   : flat array of llama_token (the full corpus, pre-tokenised)
  * n_tokens : number of tokens
@@ -78,7 +78,7 @@ void ion7_opt_dataset_free(ggml_opt_dataset_t dataset)
 }
 
 /*
- * ion7_opt_epoch — run one training epoch.
+ * ion7_opt_epoch - run one training epoch.
  *
  * val_split : fraction of dataset used for validation (0.0 = no validation)
  * Returns   : training loss for this epoch, or -1.0 on error.

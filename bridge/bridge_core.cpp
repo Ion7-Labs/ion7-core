@@ -1,4 +1,4 @@
-/* bridge_core.cpp — llama.h layer (model, context, KV, state, samplers) */
+/* bridge_core.cpp - llama.h layer (model, context, KV, state, samplers) */
 /*
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
@@ -17,7 +17,7 @@
 #include <string>
 
 /* =========================================================================
- * Log globals (definitions — declared extern in bridge_internal.hpp)
+ * Log globals (definitions - declared extern in bridge_internal.hpp)
  * ======================================================================= */
 
 int   g_log_level      = 1;

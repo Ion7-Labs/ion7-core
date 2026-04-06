@@ -1,4 +1,4 @@
-/* bridge_utils.cpp — standalone utilities (warmup, UTF-8, JSON schema, regex, cvec, NUMA, CPU caps, log routing, base64, JSON) */
+/* bridge_utils.cpp - standalone utilities (warmup, UTF-8, JSON schema, regex, cvec, NUMA, CPU caps, log routing, base64, JSON) */
 /*
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
@@ -14,7 +14,7 @@
 #include "json-schema-to-grammar.h"
 #include "base64.hpp"
 
-/* nlohmann/json — full implementation needed for ordered_json::parse() */
+/* nlohmann/json - full implementation needed for ordered_json::parse() */
 #include "nlohmann/json.hpp"
 
 #include <cstdio>

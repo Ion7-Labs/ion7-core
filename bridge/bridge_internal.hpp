@@ -1,6 +1,6 @@
 #pragma once
 /*
- * bridge_internal.hpp — private header shared between bridge_*.cpp files.
+ * bridge_internal.hpp - private header shared between bridge_*.cpp files.
  *
  * NOT part of the public API (not included by ion7_bridge.h).
  * Used only by bridge_core.cpp, bridge_utils.cpp, etc. to share:

@@ -621,5 +621,22 @@ return {
         ROPE_NEOX       = 2,
         ROPE_MROPE      = 10,
         ROPE_IMROPE     = 24,
+        -- Speculative decoding types :
+        SPEC_NONE         = 0,
+        SPEC_DRAFT        = 1,
+        SPEC_EAGLE3       = 2,
+        SPEC_NGRAM_SIMPLE = 3,
+        SPEC_NGRAM_MAP_K  = 4,
+        SPEC_NGRAM_CACHE  = 7,
+        -- Regex match results (ion7_regex_search)
+        REGEX_NO_MATCH    = 0,
+        REGEX_PARTIAL     = 1,
+        REGEX_FULL        = 2,
+        -- NUMA strategies (ion7_numa_init)
+        NUMA_DISABLED   = 0,
+        NUMA_DISTRIBUTE = 1,
+        NUMA_ISOLATE    = 2,
+        NUMA_NUMACTL    = 3,
+        NUMA_MIRROR     = 4,
     },
 }

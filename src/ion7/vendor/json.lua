@@ -1,7 +1,7 @@
 --- @module ion7.vendor.json
 --- SPDX-License-Identifier: MIT
 ---
---- Minimal JSON encoder / decoder — pure Lua, zero dependencies.
+--- Minimal JSON encoder / decoder - pure Lua, zero dependencies.
 ---
 --- Handles: objects, arrays, strings (full escape sequences + \uXXXX),
 ---          numbers, booleans, null (decoded as nil).
@@ -180,7 +180,7 @@ end
 local encode  -- forward declaration
 
 local function encode_string(v)
-    return '"' .. (v:gsub('[\0-\x1f"\\]', ESC)) .. '"'
+    return '"' .. v:gsub('[\1-\31"\\]', ESC):gsub('%z', ESC) .. '"'
 end
 
 local function encode_array(t, n)
@@ -220,13 +220,13 @@ encode = function(v)
         return 'null'
     elseif t == 'table'   then
         -- Array detection: keys must be consecutive integers 1..n with no extras
-        local n = #t
+        local n = #v
         if n > 0 then
             local count = 0
-            for _ in pairs(t) do count = count + 1 end
-            if count == n then return encode_array(t, n) end
+            for _ in pairs(v) do count = count + 1 end
+            if count == n then return encode_array(v, n) end
         end
-        return encode_object(t)
+        return encode_object(v)
     end
     error("[ion7.vendor.json] cannot encode value of type '" .. t .. "'", 2)
 end

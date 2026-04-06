@@ -179,6 +179,125 @@ void ion7_perf_get  (struct llama_context* ctx,
 
 /* ---- Diagnostics -------------------------------------------------------- */
 void ion7_print_struct_sizes(void);
+
+/* ---- Context warmup (JIT GPU kernel pre-compilation) ------------------- */
+void ion7_context_warmup(struct llama_context* ctx);
+
+/* ---- Advanced sampler (common_sampler) --------------------------------- */
+typedef struct {
+    uint32_t seed;
+    int32_t  top_k;
+    float    top_p;
+    float    min_p;
+    float    xtc_probability;
+    float    xtc_threshold;
+    float    temp;
+    float    repeat_penalty;
+    float    freq_penalty;
+    float    pres_penalty;
+    int32_t  repeat_last_n;
+    float    dry_mult;
+    float    dry_base;
+    int32_t  dry_allowed_len;
+    int32_t  dry_last_n;
+    int32_t  mirostat;
+    float    mirostat_tau;
+    float    mirostat_eta;
+    int32_t  grammar_lazy;
+} ion7_csampler_params_t;
+
+typedef struct ion7_csampler ion7_csampler_t;
+
+ion7_csampler_t* ion7_csampler_init(
+    const struct llama_model*     model,
+    const ion7_csampler_params_t* params,
+    const char*                   grammar,
+    const char**                  trigger_words,
+    int                           n_triggers,
+    const int32_t*                logit_bias_ids,
+    const float*                  logit_bias_val,
+    int                           n_logit_bias);
+void     ion7_csampler_free    (ion7_csampler_t* s);
+int32_t  ion7_csampler_sample  (ion7_csampler_t* s, struct llama_context* ctx, int idx, int grammar_first);
+void     ion7_csampler_accept  (ion7_csampler_t* s, int32_t token);
+void     ion7_csampler_reset   (ion7_csampler_t* s);
+int32_t  ion7_csampler_last    (const ion7_csampler_t* s);
+uint32_t ion7_csampler_get_seed(const ion7_csampler_t* s);
+
+/* ---- Speculative decoding --------------------------------------------- */
+typedef struct ion7_speculative ion7_speculative_t;
+
+ion7_speculative_t* ion7_speculative_init(
+    struct llama_context* ctx_tgt,
+    struct llama_context* ctx_dft,
+    int type, int n_draft, int ngram_min, int ngram_max);
+void ion7_speculative_free  (ion7_speculative_t* spec);
+void ion7_speculative_begin (ion7_speculative_t* spec, const int32_t* prompt, int n_prompt);
+int  ion7_speculative_draft (ion7_speculative_t* spec,
+                              const int32_t* prompt, int n_prompt,
+                              int32_t last_token,
+                              int32_t* out_draft, int max_draft);
+void ion7_speculative_accept(ion7_speculative_t* spec, int n_accepted);
+void ion7_speculative_stats (const ion7_speculative_t* spec);
+
+/* ---- Chat output parsing ----------------------------------------------- */
+int ion7_chat_parse(
+    ion7_chat_templates_t* t,
+    const char*            text,
+    int                    enable_thinking,
+    char*   content_buf,  int32_t content_len,
+    char*   thinking_buf, int32_t thinking_len,
+    char*   tools_buf,    int32_t tools_len,
+    int*    out_has_tools);
+
+/* ---- UTF-8 streaming helpers ------------------------------------------- */
+int ion7_utf8_seq_len    (uint8_t first_byte);
+int ion7_utf8_is_complete(const char* buf, size_t len);
+
+/* ---- JSON Schema → GBNF ----------------------------------------------- */
+int ion7_json_schema_to_grammar(const char* schema_json, char* out, size_t out_len);
+
+/* ---- Partial regex matching -------------------------------------------- */
+typedef struct ion7_regex ion7_regex_t;
+
+ion7_regex_t* ion7_regex_new   (const char* pattern);
+void          ion7_regex_free  (ion7_regex_t* r);
+int           ion7_regex_search(ion7_regex_t* r, const char* text, size_t len, int partial);
+
+/* ---- Control vectors (activation steering) ----------------------------- */
+int  ion7_cvec_apply(struct llama_context* ctx,
+                      const float* data, size_t len,
+                      int32_t n_embd, int32_t il_start, int32_t il_end);
+void ion7_cvec_clear(struct llama_context* ctx);
+
+/* ---- NUMA topology ----------------------------------------------------- */
+void ion7_numa_init(int strategy);
+int  ion7_is_numa  (void);
+
+/* ---- CPU capability detection ----------------------------------------- */
+typedef struct {
+    int sse3, ssse3, avx, avx2, avx_vnni, bmi2, f16c, fma;
+    int avx512, avx512_vbmi, avx512_vnni, avx512_bf16, amx_int8;
+    int neon, arm_fma, fp16_va, dotprod, matmul_int8;
+    int sve, sve_cnt, sme;
+    int riscv_v, rvv_vlen;
+    int vsx, wasm_simd;
+} ion7_cpu_caps_t;
+
+void ion7_cpu_caps(ion7_cpu_caps_t* out);
+
+/* ---- Log routing ------------------------------------------------------- */
+void ion7_log_to_file      (const char* path);
+void ion7_log_set_timestamps(int enable);
+
+/* ---- Base64 ------------------------------------------------------------ */
+int ion7_base64_encode(const uint8_t* data, size_t len, char* out, size_t out_len);
+int ion7_base64_decode(const char* src, size_t src_len, uint8_t* out, size_t out_len);
+
+/* ---- JSON utilities ---------------------------------------------------- */
+int ion7_json_validate(const char* json_str);
+int ion7_json_format  (const char* json_str, char* out, size_t out_len);
+int ion7_json_merge   (const char* base, const char* overlay, char* out, size_t out_len);
 ]]
 
 -- ── Internal ─────────────────────────────────────────────────────────────────
