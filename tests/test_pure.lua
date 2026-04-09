@@ -339,6 +339,201 @@ T.test("require('ion7.core.threadpool') returns a table with new()", function()
     T.is_type(P.new, "function", "threadpool.new should be a function")
 end)
 
+T.test("require('ion7.vendor.json') returns a table with encode/decode", function()
+    local j = require "ion7.vendor.json"
+    T.is_type(j, "table")
+    T.is_type(j.encode, "function")
+    T.is_type(j.decode, "function")
+end)
+
+-- ── Suite 6: ion7.vendor.json ────────────────────────────────────────────────
+
+T.suite("ion7.vendor.json - decode")
+
+local json = require "ion7.vendor.json"
+
+T.test("decode string", function()
+    T.eq(json.decode('"hello"'), "hello")
+end)
+
+T.test("decode integer", function()
+    T.eq(json.decode("42"), 42)
+end)
+
+T.test("decode negative float", function()
+    T.near(json.decode("-3.14"), -3.14, 1e-6)
+end)
+
+T.test("decode true / false / null", function()
+    T.eq(json.decode("true"),  true)
+    T.eq(json.decode("false"), false)
+    T.eq(json.decode("null"),  nil)
+end)
+
+T.test("decode empty object", function()
+    local t = json.decode("{}")
+    T.is_type(t, "table")
+    T.eq(next(t), nil)
+end)
+
+T.test("decode empty array", function()
+    local t = json.decode("[]")
+    T.is_type(t, "table")
+    T.eq(#t, 0)
+end)
+
+T.test("decode nested object", function()
+    local t = json.decode('{"name":"Joi","version":2,"active":true}')
+    T.eq(t.name,    "Joi")
+    T.eq(t.version, 2)
+    T.eq(t.active,  true)
+end)
+
+T.test("decode array of numbers", function()
+    local t = json.decode("[1,2,3]")
+    T.eq(#t, 3)
+    T.eq(t[1], 1); T.eq(t[2], 2); T.eq(t[3], 3)
+end)
+
+T.test("decode nested array in object", function()
+    local t = json.decode('{"tags":["a","b"],"count":2}')
+    T.eq(#t.tags,  2)
+    T.eq(t.tags[1], "a")
+    T.eq(t.count,  2)
+end)
+
+T.test("decode string with escape sequences", function()
+    T.eq(json.decode('"line1\\nline2"'), "line1\nline2")
+    T.eq(json.decode('"tab\\there"'),   "tab\there")
+    T.eq(json.decode('"quote\\"end"'),  'quote"end')
+end)
+
+T.test("decode \\uXXXX ASCII codepoint", function()
+    T.eq(json.decode('"\\u0041"'), "A")  -- U+0041 = 'A'
+end)
+
+T.test("decode \\uXXXX 2-byte UTF-8", function()
+    -- U+00E9 = é (c3 a9 in UTF-8)
+    local s = json.decode('"\\u00e9"')
+    T.eq(#s, 2, "é should be 2 bytes")
+end)
+
+T.test("decode \\uXXXX 3-byte UTF-8 (CJK)", function()
+    -- U+4E2D = 中 (e4 b8 ad in UTF-8)
+    local s = json.decode('"\\u4e2d"')
+    T.eq(#s, 3, "中 should be 3 bytes")
+end)
+
+T.test("decode whitespace is ignored", function()
+    local t = json.decode('  {  "x"  :  1  }  ')
+    T.eq(t.x, 1)
+end)
+
+T.test("decode error on invalid JSON", function()
+    T.err(function() json.decode("not json") end)
+end)
+
+T.test("decode error on unterminated string", function()
+    T.err(function() json.decode('"unterminated') end)
+end)
+
+T.test("decode error on wrong arg type", function()
+    T.err(function() json.decode(42) end)
+end)
+
+T.suite("ion7.vendor.json - encode")
+
+T.test("encode string", function()
+    T.eq(json.encode("hello"), '"hello"')
+end)
+
+T.test("encode integer", function()
+    T.eq(json.encode(42), "42")
+end)
+
+T.test("encode float", function()
+    -- float representation: should be parseable back
+    local s = json.encode(3.14)
+    T.near(tonumber(s), 3.14, 1e-6)
+end)
+
+T.test("encode true / false / nil", function()
+    T.eq(json.encode(true),  "true")
+    T.eq(json.encode(false), "false")
+    T.eq(json.encode(nil),   "null")
+end)
+
+T.test("encode empty object", function()
+    T.eq(json.encode({}), "{}")
+end)
+
+T.test("encode array", function()
+    T.eq(json.encode({1, 2, 3}), "[1,2,3]")
+end)
+
+T.test("encode object", function()
+    local s = json.encode({ role = "user" })
+    -- key order is unspecified, just check round-trip
+    local t = json.decode(s)
+    T.eq(t.role, "user")
+end)
+
+T.test("encode nested", function()
+    local v = { messages = {{ role = "user", content = "hi" }} }
+    local s = json.encode(v)
+    local t = json.decode(s)
+    T.eq(t.messages[1].role, "user")
+    T.eq(t.messages[1].content, "hi")
+end)
+
+T.test("encode string escapes control chars", function()
+    local s = json.encode("a\nb")
+    T.ok(s:find("\\n"), "newline should be escaped: " .. s)
+end)
+
+T.test("encode NaN / inf as string literals", function()
+    local nan = math.huge - math.huge  -- IEEE 754 NaN
+    T.eq(json.encode(nan),        '"nan"')
+    T.eq(json.encode(math.huge),  '"inf"')
+    T.eq(json.encode(-math.huge), '"-inf"')
+end)
+
+T.test("encode integer without decimal point", function()
+    T.eq(json.encode(100), "100")
+    T.eq(json.encode(-1),  "-1")
+end)
+
+T.test("encode error on unsupported type", function()
+    T.err(function() json.encode(function() end) end)
+end)
+
+T.suite("ion7.vendor.json - round-trip")
+
+T.test("object round-trip", function()
+    local orig = { name = "Joi", version = 2, tags = {"a","b"}, active = true }
+    local t = json.decode(json.encode(orig))
+    T.eq(t.name,    orig.name)
+    T.eq(t.version, orig.version)
+    T.eq(t.active,  orig.active)
+    T.eq(t.tags[1], "a")
+    T.eq(t.tags[2], "b")
+end)
+
+T.test("large integer round-trip (< 2^53)", function()
+    local n = 2^52
+    T.eq(json.decode(json.encode(n)), n)
+end)
+
+T.test("empty string round-trip", function()
+    T.eq(json.decode(json.encode("")), "")
+end)
+
+T.test("deeply nested round-trip", function()
+    local orig = { a = { b = { c = { d = 42 } } } }
+    local t = json.decode(json.encode(orig))
+    T.eq(t.a.b.c.d, 42)
+end)
+
 -- ── Summary ──────────────────────────────────────────────────────────────────
 local ok = T.summary()
 os.exit(ok and 0 or 1)

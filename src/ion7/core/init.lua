@@ -45,6 +45,7 @@ local _modules = {
     Sampler       = "ion7.core.sampler",
     CustomSampler = "ion7.core.custom_sampler",
     Threadpool    = "ion7.core.threadpool",
+    Speculative   = "ion7.core.speculative",
 }
 
 setmetatable(ion7, {

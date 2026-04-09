@@ -21,8 +21,8 @@ ion7-core exposes **runtime primitives only**:
 - Threadpool management
 - Performance monitoring
 
-**NOT in scope:** chat loops, stop strings, streaming, RAG, grammar,
-embeddings, template engines. Those belong in downstream modules.
+**NOT in scope:** chat loops, stop strings, streaming, RAG.
+Those belong in downstream modules (`ion7-llm`, `ion7-rag`, etc.).
 
 ---
 
@@ -438,26 +438,77 @@ not versioned here - they track llama.h master directly.
 
 ### Coverage summary
 
-| Category | Functions |
-|----------|-----------|
-| Backend | `ion7_backend_init/free`, `ion7_set_log_level` |
-| Capabilities | `ion7_supports_mmap/mlock/gpu_offload/rpc`, `ion7_max_devices/parallel_sequences` |
-| Model | `ion7_model_load/load_splits/load_fd/free/save/quantize` + 20 introspection fns |
-| Context | `ion7_context_create/embedding_context_create/free` |
-| KV | `ion7_kv_clear/seq_rm/cp/keep/shift` |
-| State | `ion7_state_size/get/set/save_file/load_file` + seq variants |
-| LoRA | `ion7_lora_load/free/apply/remove/meta_val` |
-| Perf | `ion7_perf_print/reset/get` |
-| Chat templates | `ion7_chat_templates_init/free/apply/support_thinking` (Jinja2 native, `enable_thinking` support) |
-| Reasoning budget | `ion7_reasoning_budget_init` (hard token limit inside `<think>` blocks) |
-| Training | `ion7_opt_init/free`, `ion7_opt_dataset_create/free/epoch` (LoRA/fine-tune via llama_opt) |
-| Threadpool | `ion7_threadpool_create/free/pause/resume/attach/detach` |
-| Custom sampler | `ion7_sampler_create` + callback typedefs |
-| VRAM fit | `ion7_params_fit` |
+The bridge is split across four translation units for incremental builds. All symbols are exported through the single stable `ion7_bridge.h` header.
 
+| Category | Source TU | Functions |
+|----------|-----------|-----------|
+| Backend | `bridge_core` | `ion7_backend_init/free`, `ion7_set_log_level` |
+| Capabilities | `bridge_core` | `ion7_supports_mmap/mlock/gpu_offload/rpc`, `ion7_max_devices/parallel_sequences`, `ion7_bridge_version`, `ion7_llama_info` |
+| Model | `bridge_core` | `ion7_model_load/load_splits/load_fd/free/save/quantize` + introspection (`n_params`, `n_layer`, `n_embd`, `n_head`, `n_head_kv`, `n_ctx_train`, `n_embd_inp/out`, `n_swa`, `n_cls_out`, `size`, `rope_type`, `rope_freq_scale_train`, `decoder_start_token`, `cls_label`, `has_encoder/decoder`, `is_recurrent/hybrid/diffusion`, `chat_template`, `meta_count/val/key_at/val_at`) |
+| Context | `bridge_core` | `ion7_context_create/embedding_context_create/free` |
+| KV cache | `bridge_core` | `ion7_kv_clear/seq_rm/cp/keep/shift` |
+| State | `bridge_core` | `ion7_state_size/get/set/save_file/load_file` + seq variants |
+| LoRA | `bridge_core` | `ion7_lora_load/free/apply/remove/meta_val` |
+| Perf | `bridge_core` | `ion7_perf_print/reset/get` |
+| Threadpool | `bridge_core` | `ion7_threadpool_create/free/pause/resume/attach/detach` |
+| Custom sampler | `bridge_core` | `ion7_sampler_create` + callback typedefs |
+| VRAM fit | `bridge_core` | `ion7_params_fit` |
+| Diagnostics | `bridge_core` | `ion7_print_struct_sizes` |
+| Chat templates | `bridge_common` | `ion7_chat_templates_init/free/apply/support_thinking` — Jinja2 native, `enable_thinking`, tool schemas, `tool_choice` |
+| Advanced sampler | `bridge_common` | `ion7_csampler_init/free/accept/reset/get_seed` — DRY, XTC, mirostat, lazy grammar (CRANE), trigger words/tokens |
+| Speculative decoding | `bridge_common` | `ion7_speculative_init/free/begin/draft/accept/stats` — NGRAM_SIMPLE, NGRAM_CACHE, NGRAM_MAP_K, DRAFT model |
+| Chat parse | `bridge_common` | `ion7_chat_parse` — content / thinking / tool_calls from raw model output |
+| Training | `bridge_training` | `ion7_opt_init/free/epoch`, `ion7_opt_dataset_create/free` |
+| Context warmup | `bridge_utils` | `ion7_context_warmup` — JIT GPU kernel pre-compilation |
+| UTF-8 | `bridge_utils` | `ion7_utf8_seq_len/is_complete` — streaming-safe multibyte handling |
+| JSON Schema | `bridge_utils` | `ion7_json_schema_to_grammar` — JSON Schema draft-07 → GBNF (C++ backend) |
+| Regex | `bridge_utils` | `ion7_regex_new/free/search` — partial/streaming-safe matching |
+| Control vectors | `bridge_utils` | `ion7_cvec_apply/clear` — activation steering |
+| NUMA | `bridge_utils` | `ion7_numa_init`, `ion7_is_numa` |
+| CPU caps | `bridge_utils` | `ion7_cpu_caps` — AVX, AVX512, AMX, NEON, SVE, RVV, WASM SIMD |
+| Log routing | `bridge_utils` | `ion7_log_to_file`, `ion7_log_set_timestamps` |
+| Base64 | `bridge_utils` | `ion7_base64_encode/decode` |
+| JSON utilities | `bridge_utils` | `ion7_json_validate/format/merge` (RFC 7396 merge-patch) |
+
+**Total bridge API: 84 functions**  
 **llama.h coverage: 213/224 functions (95%)**  
 Excluded: `llama_model_init_from_user` (needs `gguf_context*`).  
 Note: training (`llama_opt_*`) is exposed via libcommon wrappers (`ion7_opt_*`) rather than directly.
+
+### Constants (`types.constants`)
+
+Accessible via `Loader.instance().C.<name>` or the `C` table in bridge tests.
+
+#### Speculative decoding types — `ion7_speculative_init` `type` parameter
+
+Must match `common_speculative_type` enum in `common/common.h`.
+
+| Constant | Value | Description |
+|---|---|---|
+| `SPEC_NONE` | `0` | No speculative decoding |
+| `SPEC_DRAFT` | `1` | Separate draft model |
+| `SPEC_EAGLE3` | `2` | EAGLE-3 speculative heads |
+| `SPEC_NGRAM_SIMPLE` | `3` | Self-speculative via n-gram history |
+| `SPEC_NGRAM_MAP_K` | `4` | N-gram with prediction map |
+| `SPEC_NGRAM_CACHE` | `7` | LRU n-gram cache (≈ Cacheback) — best zero-VRAM option |
+
+#### Regex match results — `ion7_regex_search` return value
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `REGEX_NO_MATCH` | `0` | No match, not even a prefix |
+| `REGEX_PARTIAL` | `1` | Input is a valid prefix of a match |
+| `REGEX_FULL` | `2` | Complete match found |
+
+#### NUMA strategies — `ion7_numa_init` `strategy` parameter
+
+| Constant | Value | Description |
+|---|---|---|
+| `NUMA_DISABLED` | `0` | No NUMA awareness (default) |
+| `NUMA_DISTRIBUTE` | `1` | Round-robin across all NUMA nodes |
+| `NUMA_ISOLATE` | `2` | Use only the current node (best for single-socket) |
+| `NUMA_NUMACTL` | `3` | Read strategy from `numactl` config |
+| `NUMA_MIRROR` | `4` | Replicate data across all nodes |
 
 ---
 

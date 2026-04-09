@@ -313,6 +313,19 @@ function SamplerBuilder:infill(vocab)
     return push(self, { type = "infill", vocab = vocab })
 end
 
+--- Add a native reasoning-budget sampler to the chain.
+--- Forces </think> injection once the token budget inside <think> is exhausted.
+--- Designed for Qwen3/3.5 and DeepSeek-R1 thinking models.
+--- Must be placed FIRST in the chain (before temperature / top-k).
+---
+--- @param  model     cdata|table  llama_model* or ion7-core Model object.
+--- @param  n_budget  number       Max tokens inside a <think> block.
+--- @return SamplerBuilder
+function SamplerBuilder:reasoning_budget(model, n_budget)
+    local model_ptr = type(model) == "table" and model._ptr or model
+    return push(self, { type = "reasoning_budget", model_ptr = model_ptr, n_budget = n_budget or 512 })
+end
+
 --- Add a custom Lua-implemented sampler to the chain.
 --- @param  cs  CustomSampler  Created via llama.CustomSampler.new().
 --- Build the sampler chain.
@@ -436,6 +449,10 @@ function SamplerBuilder:build()
                 s.vocab, s.gbnf, s.root,
                 tw, n_tw, tt, n_tt, tp, n_tp)
 
+        elseif s.type == "reasoning_budget" then
+            local bridge = L.bridge
+            smpl = bridge.ion7_reasoning_budget_init(s.model_ptr, s.n_budget)
+
         elseif s.type == "infill" then
             assert(s.vocab, "[ion7.core.sampler] infill requires vocab")
             smpl = lib.llama_sampler_init_infill(s.vocab)
@@ -443,10 +460,9 @@ function SamplerBuilder:build()
         elseif s.type == "custom" then
             assert(s.sampler and type(s.sampler.ptr) == "function",
                 "[ion7.core.sampler] custom requires a CustomSampler object")
-            -- Keep the CustomSampler alive to prevent GC of Lua callbacks
+            -- CustomSampler reference pinned here to prevent GC of its Lua callbacks.
             self._custom_refs = self._custom_refs or {}
             self._custom_refs[#self._custom_refs + 1] = s.sampler
-            -- Let the general llama_sampler_chain_add below handle the add
             smpl = s.sampler:ptr()
 
         else
@@ -462,7 +478,6 @@ function SamplerBuilder:build()
         lib.llama_sampler_chain_add(chain, smpl)
     end
 
-    -- Wrap in managed object
     return Sampler._wrap(ffi.gc(chain, lib.llama_sampler_free), lib)
 end
 
@@ -531,6 +546,17 @@ function Sampler:get(i)
     return setmetatable({ _chain = smpl, _lib = self._lib }, Sampler)
 end
 
+--- Remove the sampler at position i from the chain and return it (caller owns it).
+--- The returned sampler is NOT GC-managed - free it explicitly with Sampler:free()
+--- or add it to another chain.
+--- @param  i  number  0-based index.
+--- @return Sampler  Removed sampler (unowned).
+function Sampler:remove(i)
+    local smpl = self._lib.llama_sampler_chain_remove(self._chain, i)
+    if smpl == nil then return nil end
+    return setmetatable({ _chain = smpl, _lib = self._lib }, Sampler)
+end
+
 --- Clone this sampler chain.
 --- The clone is independently GC-managed.
 --- @return Sampler
@@ -571,8 +597,7 @@ end
 function Sampler:free()
     if self._chain == nil then return end
     local ffi = Loader.instance().ffi
-    -- Cancel the ffi.gc finalizer to prevent double-free,
-    -- then free the chain immediately.
+    -- GC finalizer disarmed before explicit release - prevents double-free.
     ffi.gc(self._chain, nil)
     self._lib.llama_sampler_free(self._chain)
     self._chain = nil
@@ -622,5 +647,169 @@ end
 
 -- Sampler.json() is available in ion7-grammar module (not in core).
 
+-- ── CSampler ─────────────────────────────────────────────────────────────────
+-- Wraps ion7_csampler_t: the "common_sampler" from libcommon.
+-- Supports DRY, XTC, mirostat, grammar_lazy, logit_bias in a single C object.
+-- Drop-in compatible with Sampler in generator.lua: sample() auto-accepts.
+--
+-- @usage
+--   local s = Sampler.common(model, {
+--       temp = 0.8, top_k = 40, top_p = 0.95,
+--       dry_mult = 0.8, dry_base = 1.75,
+--       xtc_probability = 0.1, xtc_threshold = 0.1,
+--   })
+--   local tok = s:sample(ctx:ptr(), -1)  -- accepts internally
+
+local CSampler = {}
+CSampler.__index = CSampler
+
+--- Create a CSampler from a model + options table.
+---
+--- @param  model  cdata|table  llama_model* or ion7-core Model object.
+--- @param  opts   table?
+---   opts.seed              number?   RNG seed (default: random)
+---   opts.top_k             number?   Top-K (default: 40)
+---   opts.top_p             number?   Top-P (default: 0.95)
+---   opts.min_p             number?   Min-P (default: 0.05)
+---   opts.temp              number?   Temperature (default: 0.8)
+---   opts.repeat_penalty    number?   Repetition penalty (default: 1.0)
+---   opts.freq_penalty      number?   Frequency penalty (default: 0.0)
+---   opts.pres_penalty      number?   Presence penalty (default: 0.0)
+---   opts.repeat_last_n     number?   Window for penalties (default: 64)
+---   opts.dry_mult          number?   DRY multiplier (default: 0 = off)
+---   opts.dry_base          number?   DRY base (default: 1.75)
+---   opts.dry_allowed_len   number?   DRY min seq len (default: 2)
+---   opts.dry_last_n        number?   DRY context window (default: -1 = all)
+---   opts.xtc_probability   number?   XTC firing probability (default: 0 = off)
+---   opts.xtc_threshold     number?   XTC logit threshold (default: 0.1)
+---   opts.mirostat          number?   0 = off, 1 = v1, 2 = v2 (default: 0)
+---   opts.mirostat_tau      number?   Mirostat target entropy (default: 5.0)
+---   opts.mirostat_eta      number?   Mirostat learning rate (default: 0.1)
+---   opts.grammar           string?   GBNF grammar string (optional)
+---   opts.grammar_lazy      bool?     Activate grammar only on trigger (default: false)
+---   opts.trigger_words     table?    Strings that activate lazy grammar
+---   opts.logit_bias        table?    { [token_id] = delta_logit, ... }
+--- @return CSampler
+function CSampler.new(model, opts)
+    local L      = Loader.instance()
+    local ffi    = L.ffi
+    local bridge = L.bridge
+    opts = opts or {}
+
+    local model_ptr = type(model) == "table" and model._ptr or model
+    assert(model_ptr ~= nil, "[ion7.core.sampler] CSampler: model pointer is NULL")
+
+    local params = ffi.new("ion7_csampler_params_t", {
+        seed            = opts.seed or 0xFFFFFFFF,
+        top_k           = opts.top_k or 40,
+        top_p           = opts.top_p or 0.95,
+        min_p           = opts.min_p or 0.05,
+        xtc_probability = opts.xtc_probability or 0.0,
+        xtc_threshold   = opts.xtc_threshold   or 0.1,
+        temp            = opts.temp or opts.temperature or 0.8,
+        repeat_penalty  = opts.repeat_penalty  or 1.0,
+        freq_penalty    = opts.freq_penalty    or 0.0,
+        pres_penalty    = opts.pres_penalty    or 0.0,
+        repeat_last_n   = opts.repeat_last_n   or 64,
+        dry_mult        = opts.dry_mult        or 0.0,
+        dry_base        = opts.dry_base        or 1.75,
+        dry_allowed_len = opts.dry_allowed_len or 2,
+        dry_last_n      = opts.dry_last_n      or -1,
+        mirostat        = opts.mirostat        or 0,
+        mirostat_tau    = opts.mirostat_tau    or 5.0,
+        mirostat_eta    = opts.mirostat_eta    or 0.1,
+        grammar_lazy    = (opts.grammar_lazy and 1 or 0),
+    })
+
+    -- Grammar string (nil = no grammar)
+    local grammar = opts.grammar or nil
+
+    -- Trigger words for lazy grammar activation
+    local tw_arr, tw_refs, n_tw = nil, {}, 0
+    if opts.trigger_words and #opts.trigger_words > 0 then
+        n_tw  = #opts.trigger_words
+        tw_arr = ffi.new("const char*[?]", n_tw)
+        for i, w in ipairs(opts.trigger_words) do
+            tw_refs[i] = w
+            tw_arr[i - 1] = w
+        end
+    end
+
+    -- Logit bias: two parallel arrays { token_id } / { float delta }
+    local lb_ids, lb_vals, n_lb = nil, nil, 0
+    if opts.logit_bias then
+        local ids, vals = {}, {}
+        for tok_id, delta in pairs(opts.logit_bias) do
+            ids[#ids + 1]  = tok_id
+            vals[#vals + 1] = delta
+        end
+        n_lb   = #ids
+        lb_ids = ffi.new("int32_t[?]", n_lb)
+        lb_vals = ffi.new("float[?]",   n_lb)
+        for i = 1, n_lb do lb_ids[i-1] = ids[i]; lb_vals[i-1] = vals[i] end
+    end
+
+    local ptr = bridge.ion7_csampler_init(
+        model_ptr, params, grammar,
+        tw_arr, n_tw,
+        lb_ids, lb_vals, n_lb)
+
+    assert(ptr ~= nil, "[ion7.core.sampler] ion7_csampler_init returned NULL")
+
+    return setmetatable({
+        _ptr     = ffi.gc(ptr, bridge.ion7_csampler_free),
+        _bridge  = bridge,
+        _ffi     = ffi,
+        _tw_refs = tw_refs,  -- keep trigger word strings alive
+    }, CSampler)
+end
+
+--- Sample the next token. Auto-accepts so it is drop-in compatible with Sampler.
+--- @param  ctx  cdata   llama_context*.
+--- @param  idx  number  Logit position (-1 = last decoded position).
+--- @return number  Token ID.
+function CSampler:sample(ctx, idx)
+    return tonumber(self._bridge.ion7_csampler_sample_accept(self._ptr, ctx, idx or -1, 0)) or -1
+end
+
+--- Explicitly notify the sampler that a token was accepted (rarely needed).
+--- @param  token  number
+function CSampler:accept(token)
+    self._bridge.ion7_csampler_accept(self._ptr, token)
+end
+
+--- Reset sampler state (penalty history, mirostat, grammar position).
+function CSampler:reset()
+    self._bridge.ion7_csampler_reset(self._ptr)
+end
+
+--- Last accepted token ID (-1 if none yet).
+--- @return number
+function CSampler:last()
+    return tonumber(self._bridge.ion7_csampler_last(self._ptr))
+end
+
+--- Current RNG seed.
+--- @return number
+function CSampler:seed()
+    return tonumber(self._bridge.ion7_csampler_get_seed(self._ptr))
+end
+
+--- Explicitly free the CSampler before GC.
+function CSampler:free()
+    if self._ptr then
+        self._ffi.gc(self._ptr, nil)
+        self._bridge.ion7_csampler_free(self._ptr)
+        self._ptr = nil
+    end
+end
+
+--- Factory: create a CSampler from a model + options.
+--- @param  model  cdata|table  llama_model* or ion7-core Model.
+--- @param  opts   table?       See CSampler.new() for all options.
+--- @return CSampler
+function Sampler.common(model, opts)
+    return CSampler.new(model, opts)
+end
 
 return Sampler

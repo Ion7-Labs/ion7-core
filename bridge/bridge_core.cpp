@@ -1,53 +1,64 @@
+/* bridge_core.cpp - llama.h layer (model, context, KV, state, samplers) */
 /*
- * ion7_bridge.cpp - Stable C shim between ion7-core (LuaJIT) and libllama.so.
- *
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
  *
  * This file is part of ion7-core.
  *
- * ion7-core is free software: you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * ion7-core is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with ion7-core. If not, see <https://www.gnu.org/licenses/>.
- *
  * ──────────────────────────────────────────────────────────────────────────
  * Migrated from C to C++ (ion7-core v1.1) to enable libcommon integration.
  * The public API is unchanged — all symbols remain extern "C".
- *
- * New in v1.1 (requires libcommon):
- *   - ion7_chat_templates_*   : Jinja2 templates with enable_thinking support
- *   - ion7_reasoning_budget_* : hard token budget inside <think> blocks
- *   - ion7_opt_*              : training / fine-tuning via llama_opt API
  * ──────────────────────────────────────────────────────────────────────────
  */
 
 #include "ion7_bridge.h"
-
-/* llama.cpp public API */
 #include "llama.h"
 #include "ggml-cpu.h"
+#include "bridge_internal.hpp"
 
-/* libcommon — C++ layer */
-#include "chat.h"
-#include "common.h"
-#include "reasoning-budget.h"
-
-/* Standard C++ */
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
+#include <chrono>
 #include <string>
-#include <vector>
+
+/* =========================================================================
+ * Log globals (definitions - declared extern in bridge_internal.hpp)
+ * ======================================================================= */
+
+int   g_log_level      = 1;
+FILE* g_log_file       = nullptr;
+int   g_log_timestamps = 0;
+
+/* =========================================================================
+ * Unified log callback
+ * ======================================================================= */
+
+void ion7_log_dispatch(enum ggml_log_level level, const char* text, void* ud)
+{
+    (void)ud;
+    if (g_log_level <= 0) return;
+    int threshold = 5 - g_log_level;
+    if ((int)level < threshold) return;
+
+    FILE* dst = g_log_file ? g_log_file : stderr;
+    if (g_log_timestamps) {
+        auto now = std::chrono::system_clock::now();
+        auto t   = std::chrono::system_clock::to_time_t(now);
+        struct tm tm_buf;
+#ifdef _WIN32
+        localtime_s(&tm_buf, &t);
+#else
+        localtime_r(&t, &tm_buf);
+#endif
+        char ts[32];
+        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S ", &tm_buf);
+        fputs(ts, dst);
+    }
+    fputs(text, dst);
+    if (g_log_file) fflush(g_log_file);
+}
 
 /* =========================================================================
  * Version & info
@@ -57,24 +68,10 @@ const char* ion7_bridge_version(void) { return "1.1.0"; }
 const char* ion7_llama_info(void)     { return llama_print_system_info(); }
 
 /* =========================================================================
- * Log
- * ======================================================================= */
-
-static int g_log_level = 1;
-
-static void ion7_log_cb(enum ggml_log_level level, const char* text, void* ud)
-{
-    (void)ud;
-    if (g_log_level <= 0) return;
-    int threshold = 5 - g_log_level;
-    if ((int)level >= threshold) fputs(text, stderr);
-}
-
-/* =========================================================================
  * Backend
  * ======================================================================= */
 
-void ion7_backend_init(void) { llama_log_set(ion7_log_cb, NULL); llama_backend_init(); }
+void ion7_backend_init(void) { llama_log_set(ion7_log_dispatch, NULL); llama_backend_init(); }
 void ion7_backend_free(void) { llama_backend_free(); }
 void ion7_set_log_level(int l) { g_log_level = l; }
 
@@ -93,8 +90,7 @@ int ion7_max_parallel_sequences (void) { return (int)llama_max_parallel_sequence
  * Model
  * ======================================================================= */
 
-struct llama_model* ion7_model_load(const char* path, int32_t n_gpu_layers,
-                                    int use_mmap, int use_mlock, int vocab_only)
+struct llama_model* ion7_model_load(const char* path, int32_t n_gpu_layers, int use_mmap, int use_mlock, int vocab_only)
 {
     struct llama_model_params p = llama_model_default_params();
     p.n_gpu_layers = n_gpu_layers;
@@ -106,8 +102,7 @@ struct llama_model* ion7_model_load(const char* path, int32_t n_gpu_layers,
 
 void ion7_model_free(struct llama_model* m) { if (m) llama_model_free(m); }
 
-struct llama_model* ion7_model_load_splits(const char** paths, size_t n_paths,
-                                            int32_t n_gpu_layers)
+struct llama_model* ion7_model_load_splits(const char** paths, size_t n_paths, int32_t n_gpu_layers)
 {
     struct llama_model_params p = llama_model_default_params();
     p.n_gpu_layers = n_gpu_layers;
@@ -122,8 +117,7 @@ int ion7_model_desc(const struct llama_model* m, char* buf, size_t sz)
 uint64_t ion7_model_size    (const struct llama_model* m) { return llama_model_size(m); }
 uint64_t ion7_model_n_params(const struct llama_model* m) { return llama_model_n_params(m); }
 
-int ion7_model_meta_val(const struct llama_model* m, const char* key,
-                        char* buf, size_t sz)
+int ion7_model_meta_val(const struct llama_model* m, const char* key, char* buf, size_t sz)
 {
     return llama_model_meta_val_str(m, key, buf, sz);
 }
@@ -133,14 +127,12 @@ int ion7_model_meta_count(const struct llama_model* m)
     return llama_model_meta_count(m);
 }
 
-int ion7_model_meta_key_at(const struct llama_model* m, int32_t idx,
-                            char* buf, size_t sz)
+int ion7_model_meta_key_at(const struct llama_model* m, int32_t idx, char* buf, size_t sz)
 {
     return llama_model_meta_key_by_index(m, idx, buf, sz);
 }
 
-int ion7_model_meta_val_at(const struct llama_model* m, int32_t idx,
-                            char* buf, size_t sz)
+int ion7_model_meta_val_at(const struct llama_model* m, int32_t idx, char* buf, size_t sz)
 {
     return llama_model_meta_val_str_by_index(m, idx, buf, sz);
 }
@@ -164,7 +156,7 @@ int32_t ion7_model_n_layer   (const struct llama_model* m) { return llama_model_
 int32_t ion7_model_n_head    (const struct llama_model* m) { return llama_model_n_head(m);     }
 int32_t ion7_model_n_head_kv (const struct llama_model* m) { return llama_model_n_head_kv(m);  }
 int32_t ion7_model_n_swa     (const struct llama_model* m) { return llama_model_n_swa(m);      }
-int32_t ion7_model_n_cls_out (const struct llama_model* m) { return (int32_t)llama_model_n_cls_out(m); }
+uint32_t ion7_model_n_cls_out(const struct llama_model* m) { return llama_model_n_cls_out(m); }
 float   ion7_model_rope_freq_scale_train(const struct llama_model* m) { return llama_model_rope_freq_scale_train(m); }
 int32_t ion7_model_decoder_start_token(const struct llama_model* m) { return (int32_t)llama_model_decoder_start_token(m); }
 
@@ -191,8 +183,7 @@ void ion7_model_save(const struct llama_model* m, const char* path)
     llama_model_save_to_file(m, path);
 }
 
-int ion7_params_fit(const char* path, int32_t* n_gpu_layers,
-                    uint32_t* n_ctx, uint32_t n_ctx_min)
+int ion7_params_fit(const char* path, int32_t* n_gpu_layers, uint32_t* n_ctx, uint32_t n_ctx_min)
 {
     struct llama_model_params   mparams = llama_model_default_params();
     struct llama_context_params cparams = llama_context_default_params();
@@ -201,17 +192,11 @@ int ion7_params_fit(const char* path, int32_t* n_gpu_layers,
 
     size_t max_dev = llama_max_devices();
     size_t max_ovr = llama_max_tensor_buft_overrides();
-    float*                                   ts      = (float*)calloc(max_dev, sizeof(float));
-    struct llama_model_tensor_buft_override* ov      = (struct llama_model_tensor_buft_override*)calloc(max_ovr,
-        sizeof(struct llama_model_tensor_buft_override));
-    size_t*                                  margins = (size_t*)calloc(max_dev, sizeof(size_t));
+    float* ts      = (float*)calloc(max_dev, sizeof(float));
+    struct llama_model_tensor_buft_override* ov = (struct llama_model_tensor_buft_override*)calloc(max_ovr, sizeof(struct llama_model_tensor_buft_override));
+    size_t* margins = (size_t*)calloc(max_dev, sizeof(size_t));
 
-    enum llama_params_fit_status status = llama_params_fit(
-        path, &mparams, &cparams,
-        ts, ov, margins,
-        n_ctx_min,
-        GGML_LOG_LEVEL_WARN
-    );
+    enum llama_params_fit_status status = llama_params_fit(path, &mparams, &cparams, ts, ov, margins, n_ctx_min, GGML_LOG_LEVEL_WARN);
 
     if (status == LLAMA_PARAMS_FIT_STATUS_SUCCESS) {
         *n_gpu_layers = mparams.n_gpu_layers;
@@ -226,38 +211,68 @@ int ion7_params_fit(const char* path, int32_t* n_gpu_layers,
  * Context
  * ======================================================================= */
 
-struct llama_context* ion7_context_create(
-    struct llama_model* model,
-    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch,
-    uint32_t n_seq_max,
+/* llama_context_params builder shared by ion7_context_create variants */
+static struct llama_context_params build_ctx_params(
+    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max,
     int32_t n_threads, int32_t n_threads_batch,
     int flash_attn, int offload_kqv, int op_offload,
     int no_perf, int type_k, int type_v, int swa_full, int kv_unified)
 {
     struct llama_context_params p = llama_context_default_params();
-    p.n_ctx           = n_ctx    ? n_ctx    : 4096;
-    p.n_batch         = n_batch  ? n_batch  : 2048;
-    p.n_ubatch        = n_ubatch ? n_ubatch : p.n_batch;
+    p.n_ctx           = n_ctx     ? n_ctx     : 4096;
+    p.n_batch         = n_batch   ? n_batch   : 2048;
+    p.n_ubatch        = n_ubatch  ? n_ubatch  : p.n_batch;
     p.n_seq_max       = n_seq_max ? n_seq_max : 1;
-    p.n_threads       = n_threads > 0       ? n_threads       : 4;
+    p.n_threads       = n_threads       > 0 ? n_threads       : 4;
     p.n_threads_batch = n_threads_batch > 0 ? n_threads_batch : p.n_threads * 2;
-    p.flash_attn_type = (type_k != 1 || flash_attn)
-                        ? LLAMA_FLASH_ATTN_TYPE_ENABLED
-                        : LLAMA_FLASH_ATTN_TYPE_AUTO;
-    p.offload_kqv  = (bool)offload_kqv;
-    p.op_offload   = (bool)op_offload;
-    p.no_perf      = (bool)no_perf;
-    p.swa_full     = (bool)swa_full;
-    p.kv_unified   = (bool)kv_unified;
-
+    /* quantised KV (type_k != 1 = not F16) requires explicit flash attention */
+    p.flash_attn_type = (flash_attn || type_k != 1)
+                            ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+                            : LLAMA_FLASH_ATTN_TYPE_AUTO;
+    p.offload_kqv = (bool)offload_kqv;
+    p.op_offload  = (bool)op_offload;
+    p.no_perf     = (bool)no_perf;
+    p.swa_full    = (bool)swa_full;
+    p.kv_unified  = (bool)kv_unified;
     if (type_k > 0) p.type_k = (enum ggml_type)type_k;
     if (type_v > 0) p.type_v = (enum ggml_type)type_v;
+    return p;
+}
+
+struct llama_context* ion7_context_create(
+    struct llama_model* model,
+    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max,
+    int32_t n_threads, int32_t n_threads_batch,
+    int flash_attn, int offload_kqv, int op_offload,
+    int no_perf, int type_k, int type_v, int swa_full, int kv_unified)
+{
+    struct llama_context_params p = build_ctx_params(
+        n_ctx, n_batch, n_ubatch, n_seq_max,
+        n_threads, n_threads_batch,
+        flash_attn, offload_kqv, op_offload,
+        no_perf, type_k, type_v, swa_full, kv_unified);
     return llama_init_from_model(model, p);
 }
 
-struct llama_context* ion7_embedding_context_create(
-    struct llama_model* model, uint32_t n_ctx, uint32_t n_seq_max,
-    int32_t n_threads, int pooling)
+struct llama_context* ion7_context_create_with_cb(
+    struct llama_model* model,
+    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max,
+    int32_t n_threads, int32_t n_threads_batch,
+    int flash_attn, int offload_kqv, int op_offload,
+    int no_perf, int type_k, int type_v, int swa_full, int kv_unified,
+    void* cb_eval, void* cb_eval_user_data)
+{
+    struct llama_context_params p = build_ctx_params(
+        n_ctx, n_batch, n_ubatch, n_seq_max,
+        n_threads, n_threads_batch,
+        flash_attn, offload_kqv, op_offload,
+        no_perf, type_k, type_v, swa_full, kv_unified);
+    p.cb_eval           = (ggml_backend_sched_eval_callback)cb_eval;
+    p.cb_eval_user_data = cb_eval_user_data;
+    return llama_init_from_model(model, p);
+}
+
+struct llama_context* ion7_embedding_context_create(struct llama_model* model, uint32_t n_ctx, uint32_t n_seq_max, int32_t n_threads, int pooling)
 {
     struct llama_context_params p = llama_context_default_params();
     p.n_ctx           = n_ctx ? n_ctx : 512;
@@ -281,11 +296,6 @@ void ion7_context_free(struct llama_context* ctx) { if (ctx) llama_free(ctx); }
  * KV cache
  * ======================================================================= */
 
-static inline llama_memory_t ctx_mem(struct llama_context* ctx)
-{
-    return llama_get_memory(ctx);
-}
-
 void ion7_kv_clear(struct llama_context* ctx)
 {
     llama_memory_t m = ctx_mem(ctx);
@@ -296,8 +306,7 @@ void ion7_kv_seq_rm(struct llama_context* ctx, int32_t seq, int32_t p0, int32_t 
     llama_memory_t m = ctx_mem(ctx);
     if (m) llama_memory_seq_rm(m, seq, p0, p1);
 }
-void ion7_kv_seq_cp(struct llama_context* ctx, int32_t src, int32_t dst,
-                    int32_t p0, int32_t p1)
+void ion7_kv_seq_cp(struct llama_context* ctx, int32_t src, int32_t dst, int32_t p0, int32_t p1)
 {
     llama_memory_t m = ctx_mem(ctx);
     if (m) llama_memory_seq_cp(m, src, dst, p0, p1);
@@ -307,8 +316,7 @@ void ion7_kv_seq_keep(struct llama_context* ctx, int32_t seq)
     llama_memory_t m = ctx_mem(ctx);
     if (m) llama_memory_seq_keep(m, seq);
 }
-void ion7_kv_seq_shift(struct llama_context* ctx, int32_t seq,
-                       int32_t p0, int32_t p1, int32_t delta)
+void ion7_kv_seq_shift(struct llama_context* ctx, int32_t seq, int32_t p0, int32_t p1, int32_t delta)
 {
     llama_memory_t m = ctx_mem(ctx);
     if (m) llama_memory_seq_add(m, seq, p0, p1, delta);
@@ -328,62 +336,13 @@ int ion7_state_set(struct llama_context* ctx, const uint8_t* buf, size_t sz)
 {
     return (llama_state_set_data(ctx, buf, sz) > 0) ? 1 : 0;
 }
-int ion7_state_save_file(struct llama_context* ctx, const char* path,
-                         const llama_token* tokens, size_t n)
+int ion7_state_save_file(struct llama_context* ctx, const char* path, const llama_token* tokens, size_t n)
 {
     return llama_state_save_file(ctx, path, tokens, n) ? 1 : 0;
 }
-int ion7_state_load_file(struct llama_context* ctx, const char* path,
-                         llama_token* out, size_t cap, size_t* n_out)
+int ion7_state_load_file(struct llama_context* ctx, const char* path, llama_token* out, size_t cap, size_t* n_out)
 {
     return llama_state_load_file(ctx, path, out, cap, n_out) ? 1 : 0;
-}
-
-/* =========================================================================
- * LoRA adapters
- * ======================================================================= */
-
-struct llama_adapter_lora* ion7_lora_load(struct llama_model* m, const char* path)
-{
-    return llama_adapter_lora_init(m, path);
-}
-void ion7_lora_free(struct llama_adapter_lora* a) { if (a) llama_adapter_lora_free(a); }
-
-int ion7_lora_apply(struct llama_context* ctx, struct llama_adapter_lora* a, float scale)
-{
-    struct llama_adapter_lora* adapters[1] = { a };
-    float scales[1] = { scale };
-    return (int)llama_set_adapters_lora(ctx, adapters, 1, scales);
-}
-int ion7_lora_remove(struct llama_context* ctx)
-{
-    return (int)llama_set_adapters_lora(ctx, NULL, 0, NULL);
-}
-int ion7_lora_meta_val(const struct llama_adapter_lora* a, const char* key,
-                       char* buf, size_t sz)
-{
-    return llama_adapter_meta_val_str(a, key, buf, sz);
-}
-
-/* =========================================================================
- * Performance
- * ======================================================================= */
-
-void ion7_perf_print(struct llama_context* ctx) { llama_perf_context_print(ctx); }
-void ion7_perf_reset(struct llama_context* ctx) { llama_perf_context_reset(ctx); }
-
-void ion7_perf_get(struct llama_context* ctx,
-                    double*  t_load_ms,   double*  t_p_eval_ms,
-                    double*  t_eval_ms,   int32_t* n_p_eval,
-                    int32_t* n_eval,      int32_t* n_reused)
-{
-    struct llama_perf_context_data d = llama_perf_context(ctx);
-    if (t_load_ms)   *t_load_ms   = d.t_load_ms;
-    if (t_p_eval_ms) *t_p_eval_ms = d.t_p_eval_ms;
-    if (t_eval_ms)   *t_eval_ms   = d.t_eval_ms;
-    if (n_p_eval)    *n_p_eval    = d.n_p_eval;
-    if (n_eval)      *n_eval      = d.n_eval;
-    if (n_reused)    *n_reused    = d.n_reused;
 }
 
 /* =========================================================================
@@ -410,6 +369,49 @@ int ion7_state_seq_load(struct llama_context* ctx, const char* path, int32_t des
 }
 
 /* =========================================================================
+ * LoRA adapters
+ * ======================================================================= */
+
+struct llama_adapter_lora* ion7_lora_load(struct llama_model* m, const char* path)
+{
+    return llama_adapter_lora_init(m, path);
+}
+void ion7_lora_free(struct llama_adapter_lora* a) { if (a) llama_adapter_lora_free(a); }
+
+int ion7_lora_apply(struct llama_context* ctx, struct llama_adapter_lora* a, float scale)
+{
+    struct llama_adapter_lora* adapters[1] = { a };
+    float scales[1] = { scale };
+    return (int)llama_set_adapters_lora(ctx, adapters, 1, scales);
+}
+int ion7_lora_remove(struct llama_context* ctx)
+{
+    return (int)llama_set_adapters_lora(ctx, NULL, 0, NULL);
+}
+int ion7_lora_meta_val(const struct llama_adapter_lora* a, const char* key, char* buf, size_t sz)
+{
+    return llama_adapter_meta_val_str(a, key, buf, sz);
+}
+
+/* =========================================================================
+ * Performance
+ * ======================================================================= */
+
+void ion7_perf_print(struct llama_context* ctx) { llama_perf_context_print(ctx); }
+void ion7_perf_reset(struct llama_context* ctx) { llama_perf_context_reset(ctx); }
+
+void ion7_perf_get(struct llama_context* ctx, double* t_load_ms, double* t_p_eval_ms, double*  t_eval_ms, int32_t* n_p_eval, int32_t* n_eval, int32_t* n_reused)
+{
+    struct llama_perf_context_data d = llama_perf_context(ctx);
+    if (t_load_ms)   *t_load_ms   = d.t_load_ms;
+    if (t_p_eval_ms) *t_p_eval_ms = d.t_p_eval_ms;
+    if (t_eval_ms)   *t_eval_ms   = d.t_eval_ms;
+    if (n_p_eval)    *n_p_eval    = d.n_p_eval;
+    if (n_eval)      *n_eval      = d.n_eval;
+    if (n_reused)    *n_reused    = d.n_reused;
+}
+
+/* =========================================================================
  * Threadpool
  * ======================================================================= */
 
@@ -424,13 +426,9 @@ void ion7_threadpool_free(ion7_threadpool_t* tp)
     if (tp) ggml_threadpool_free((ggml_threadpool_t)tp);
 }
 
-void ion7_threadpool_attach(struct llama_context* ctx,
-                             ion7_threadpool_t* tp,
-                             ion7_threadpool_t* tp_batch)
+void ion7_threadpool_attach(struct llama_context* ctx, ion7_threadpool_t* tp, ion7_threadpool_t* tp_batch)
 {
-    llama_attach_threadpool(ctx,
-        (ggml_threadpool_t)tp,
-        tp_batch ? (ggml_threadpool_t)tp_batch : (ggml_threadpool_t)tp);
+    llama_attach_threadpool(ctx, (ggml_threadpool_t)tp, tp_batch ? (ggml_threadpool_t)tp_batch : (ggml_threadpool_t)tp);
 }
 
 void ion7_threadpool_detach(struct llama_context* ctx)
@@ -440,8 +438,8 @@ void ion7_threadpool_detach(struct llama_context* ctx)
 
 int ion7_threadpool_n_threads(ion7_threadpool_t* tp)
 {
-    (void)tp;
-    return 0;
+    if (!tp) return 0;
+    return ggml_threadpool_get_n_threads((ggml_threadpool_t)tp);
 }
 
 void ion7_threadpool_pause(ion7_threadpool_t* tp)
@@ -497,27 +495,27 @@ typedef struct {
     void*                  userdata;
 } ion7_custom_sampler_ctx_t;
 
-static const char* _ion7_smpl_name(const struct llama_sampler* smpl) {
+static const char* ion7_smpl_name(const struct llama_sampler* smpl) {
     return ((ion7_custom_sampler_ctx_t*)smpl->ctx)->name;
 }
-static void _ion7_smpl_accept(struct llama_sampler* smpl, llama_token tok) {
+static void ion7_smpl_accept(struct llama_sampler* smpl, llama_token tok) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->accept_fn) c->accept_fn(tok, c->userdata);
 }
-static void _ion7_smpl_apply(struct llama_sampler* smpl, llama_token_data_array* cur_p) {
+static void ion7_smpl_apply(struct llama_sampler* smpl, llama_token_data_array* cur_p) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->apply_fn) c->apply_fn(cur_p, c->userdata);
 }
-static void _ion7_smpl_reset(struct llama_sampler* smpl) {
+static void ion7_smpl_reset(struct llama_sampler* smpl) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->reset_fn) c->reset_fn(c->userdata);
 }
-static void _ion7_smpl_free(struct llama_sampler* smpl) {
+static void ion7_smpl_free(struct llama_sampler* smpl) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->free_fn) c->free_fn(c->userdata);
     free(c);
 }
-static struct llama_sampler* _ion7_smpl_clone(const struct llama_sampler* smpl) {
+static struct llama_sampler* ion7_smpl_clone(const struct llama_sampler* smpl) {
     ion7_custom_sampler_ctx_t* src = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     return ion7_sampler_create(
         src->name, src->apply_fn, src->accept_fn,
@@ -527,17 +525,17 @@ static struct llama_sampler* _ion7_smpl_clone(const struct llama_sampler* smpl) 
 /* Field order matches struct llama_sampler_i exactly:
  * name, accept, apply, reset, clone, free, backend_init,
  * backend_accept, backend_apply, backend_set_input          */
-static struct llama_sampler_i _ion7_custom_iface = {
-    _ion7_smpl_name,    /* name   */
-    _ion7_smpl_accept,  /* accept */
-    _ion7_smpl_apply,   /* apply  */
-    _ion7_smpl_reset,   /* reset  */
-    _ion7_smpl_clone,   /* clone  */
-    _ion7_smpl_free,    /* free   */
-    nullptr,            /* backend_init      */
-    nullptr,            /* backend_accept    */
-    nullptr,            /* backend_apply     */
-    nullptr,            /* backend_set_input */
+static struct llama_sampler_i ion7_custom_iface = {
+    ion7_smpl_name,    /* name   */
+    ion7_smpl_accept,  /* accept */
+    ion7_smpl_apply,   /* apply  */
+    ion7_smpl_reset,   /* reset  */
+    ion7_smpl_clone,   /* clone  */
+    ion7_smpl_free,    /* free   */
+    nullptr,           /* backend_init      */
+    nullptr,           /* backend_accept    */
+    nullptr,           /* backend_apply     */
+    nullptr,           /* backend_set_input */
 };
 
 struct llama_sampler* ion7_sampler_create(
@@ -548,8 +546,7 @@ struct llama_sampler* ion7_sampler_create(
     ion7_sampler_free_fn   free_fn,
     void*                  userdata)
 {
-    ion7_custom_sampler_ctx_t* ctx =
-        (ion7_custom_sampler_ctx_t*)malloc(sizeof(ion7_custom_sampler_ctx_t));
+    ion7_custom_sampler_ctx_t* ctx = (ion7_custom_sampler_ctx_t*)malloc(sizeof(ion7_custom_sampler_ctx_t));
     if (!ctx) return nullptr;
     strncpy(ctx->name, name ? name : "custom", sizeof(ctx->name) - 1);
     ctx->name[sizeof(ctx->name) - 1] = '\0';
@@ -558,16 +555,14 @@ struct llama_sampler* ion7_sampler_create(
     ctx->reset_fn  = reset_fn;
     ctx->free_fn   = free_fn;
     ctx->userdata  = userdata;
-    return llama_sampler_init(&_ion7_custom_iface, (llama_sampler_context_t)ctx);
+    return llama_sampler_init(&ion7_custom_iface, (llama_sampler_context_t)ctx);
 }
 
 /* =========================================================================
  * Model quantization
  * ======================================================================= */
 
-int ion7_model_quantize(
-    const char* path_in, const char* path_out,
-    int ftype, int n_threads, int pure, int allow_req, int dry_run)
+int ion7_model_quantize(const char* path_in, const char* path_out, int ftype, int n_threads, int pure, int allow_req, int dry_run)
 {
     llama_model_quantize_params p = llama_model_quantize_default_params();
     p.ftype            = (enum llama_ftype)ftype;
@@ -576,230 +571,4 @@ int ion7_model_quantize(
     p.allow_requantize = (bool)allow_req;
     p.dry_run          = (bool)dry_run;
     return (int)llama_model_quantize(path_in, path_out, &p);
-}
-
-/* =========================================================================
- * ── C++ EXTENSIONS (libcommon) ───────────────────────────────────────────
- * All functions below require libcommon and are new in bridge v1.1.
- * They are still exported as extern "C" (declared in ion7_bridge.h).
- * ======================================================================= */
-
-/* ── Chat Templates (Jinja2 native, enable_thinking support) ───────────── */
-
-ion7_chat_templates_t* ion7_chat_templates_init(
-    const struct llama_model* model,
-    const char* tmpl_override)
-{
-    auto ptr = common_chat_templates_init(model, tmpl_override ? tmpl_override : "");
-    return (ion7_chat_templates_t*)ptr.release();
-}
-
-void ion7_chat_templates_free(ion7_chat_templates_t* t)
-{
-    if (t) common_chat_templates_free((common_chat_templates*)t);
-}
-
-int ion7_chat_templates_support_thinking(const ion7_chat_templates_t* t)
-{
-    if (!t) return 0;
-    return common_chat_templates_support_enable_thinking(
-        (const common_chat_templates*)t) ? 1 : 0;
-}
-
-/*
- * ion7_chat_templates_apply — apply a Jinja2 template with advanced options.
- *
- * roles[]    : array of n_msgs role strings ("system", "user", "assistant")
- * contents[] : array of n_msgs content strings
- * add_ass    : 1 = append assistant generation prefix
- * enable_thinking : -1 = model default, 0 = force off, 1 = force on
- *
- * Returns total bytes needed. If > buf_len, resize buf and call again.
- */
-int32_t ion7_chat_templates_apply(
-    ion7_chat_templates_t* t,
-    const char** roles,
-    const char** contents,
-    size_t       n_msgs,
-    int          add_ass,
-    int          enable_thinking,
-    char*        buf,
-    int32_t      buf_len)
-{
-    if (!t) return -1;
-
-    common_chat_templates_inputs inputs;
-    inputs.add_generation_prompt = (bool)add_ass;
-    inputs.use_jinja             = true;
-
-    if (enable_thinking == 0)       inputs.enable_thinking = false;
-    else if (enable_thinking == 1)  inputs.enable_thinking = true;
-    /* -1 = leave at default (true) */
-
-    for (size_t i = 0; i < n_msgs; i++) {
-        common_chat_msg msg;
-        msg.role    = roles[i]    ? roles[i]    : "";
-        msg.content = contents[i] ? contents[i] : "";
-        inputs.messages.push_back(std::move(msg));
-    }
-
-    common_chat_params result =
-        common_chat_templates_apply((const common_chat_templates*)t, inputs);
-
-    int32_t needed = (int32_t)result.prompt.size() + 1;
-    if (buf && buf_len >= needed) {
-        memcpy(buf, result.prompt.c_str(), needed);
-    }
-    return needed;
-}
-
-/* ── Reasoning Budget ──────────────────────────────────────────────────── */
-
-/*
- * ion7_reasoning_budget_init — create a sampler that hard-limits the number
- * of tokens generated inside a <think> block.
- *
- * model   : used to tokenize the special tokens
- * n_budget: max tokens inside the block (0 = disable thinking entirely)
- *
- * Returns a llama_sampler* ready to be inserted into a sampler chain.
- * The chain takes ownership; do not free manually after adding.
- */
-struct llama_sampler* ion7_reasoning_budget_init(
-    const struct llama_model* model,
-    int32_t n_budget)
-{
-    const llama_vocab* vocab = llama_model_get_vocab(model);
-
-    /* Tokenize the Qwen3/3.5 thinking delimiters.
-     * <think>\n  →  start of thinking block
-     * \n</think>\n  →  end of thinking block
-     * \n</think>\n  →  forced close token when budget is exceeded
-     * <think>\n\n</think>\n  →  prefill for enable_thinking=false  */
-    auto tokenize_str = [&](const std::string& s) -> std::vector<llama_token> {
-        std::vector<llama_token> toks(s.size() + 8);
-        int n = llama_tokenize(vocab, s.c_str(), (int32_t)s.size(),
-                               toks.data(), (int32_t)toks.size(),
-                               false, true);
-        if (n < 0) return {};
-        toks.resize(n);
-        return toks;
-    };
-
-    auto start_toks   = tokenize_str("<think>\n");
-    auto end_toks     = tokenize_str("\n</think>\n");
-    auto forced_toks  = tokenize_str("\n</think>\n");
-    auto prefill_toks = tokenize_str("<think>\n\n</think>\n");
-
-    return common_reasoning_budget_init(
-        vocab,
-        start_toks,
-        end_toks,
-        forced_toks,
-        n_budget,
-        prefill_toks);
-}
-
-/* ── Training (llama_opt API) ──────────────────────────────────────────── */
-
-/* Internal: simple fixed learning rate for opt param callback */
-struct ion7_lr_params { float lr; };
-
-static ggml_opt_optimizer_params _ion7_lr_callback(void* ud)
-{
-    ion7_lr_params* p = (ion7_lr_params*)ud;
-    ggml_opt_optimizer_params op = ggml_opt_get_default_optimizer_params(ud);
-    op.adamw.alpha = p->lr;
-    return op;
-}
-
-/*
- * ion7_opt_init — initialise training on a context.
- *
- * optimizer : 0 = AdamW (recommended), 1 = SGD
- * lr        : learning rate (e.g. 1e-4 for LoRA, 1e-5 for full fine-tune)
- *
- * Must be called before ion7_opt_epoch.
- * The context must have been created without quantized KV cache (F16/F32).
- */
-ion7_opt_state_t* ion7_opt_init(
-    struct llama_context* ctx,
-    struct llama_model*   model,
-    int                   optimizer,
-    float                 lr)
-{
-    ion7_lr_params* lrp = new ion7_lr_params{ lr };
-
-    struct llama_opt_params p;
-    p.n_ctx_train    = 0;  /* use context size */
-    p.param_filter   = llama_opt_param_filter_all;
-    p.param_filter_ud = nullptr;
-    p.get_opt_pars   = _ion7_lr_callback;
-    p.get_opt_pars_ud = (void*)lrp;
-    p.optimizer_type = (optimizer == 1)
-                       ? GGML_OPT_OPTIMIZER_TYPE_SGD
-                       : GGML_OPT_OPTIMIZER_TYPE_ADAMW;
-
-    llama_opt_init(ctx, model, p);
-    return (ion7_opt_state_t*)lrp;  /* opaque handle to release later */
-}
-
-void ion7_opt_free(ion7_opt_state_t* state)
-{
-    delete (ion7_lr_params*)state;
-}
-
-/*
- * ion7_opt_dataset_create — build a training dataset from a token array.
- *
- * tokens   : flat array of llama_token (the full corpus, pre-tokenised)
- * n_tokens : number of tokens
- * n_ctx    : context window size (stride between samples)
- *
- * Returns an opaque dataset handle. Free with ion7_opt_dataset_free.
- */
-ggml_opt_dataset_t ion7_opt_dataset_create(
-    struct llama_context* ctx,
-    const llama_token*    tokens,
-    int64_t               n_tokens,
-    int64_t               n_ctx)
-{
-    std::vector<llama_token> tok_vec(tokens, tokens + n_tokens);
-    return common_opt_dataset_init(ctx, tok_vec, n_ctx);
-}
-
-void ion7_opt_dataset_free(ggml_opt_dataset_t dataset)
-{
-    if (dataset) ggml_opt_dataset_free(dataset);
-}
-
-/*
- * ion7_opt_epoch — run one training epoch.
- *
- * val_split : fraction of dataset used for validation (0.0 = no validation)
- * Returns   : training loss for this epoch, or -1.0 on error.
- */
-float ion7_opt_epoch(
-    struct llama_context* ctx,
-    ggml_opt_dataset_t    dataset,
-    float                 val_split)
-{
-    ggml_opt_result_t result_train = ggml_opt_result_init();
-    ggml_opt_result_t result_eval  = ggml_opt_result_init();
-
-    int64_t n_data       = ggml_opt_dataset_data(dataset)->ne[1];
-    int64_t idata_split  = (int64_t)(n_data * (1.0f - val_split));
-
-    llama_opt_epoch(ctx, dataset,
-                    result_train, result_eval,
-                    idata_split,
-                    nullptr, nullptr);
-
-    double loss = 0.0, uncertainty = 0.0;
-    ggml_opt_result_loss(result_train, &loss, &uncertainty);
-
-    ggml_opt_result_free(result_train);
-    ggml_opt_result_free(result_eval);
-
-    return (float)loss;
 }
