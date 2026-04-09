@@ -17,18 +17,16 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include <sstream>
 
 /* =========================================================================
  * ── Chat Templates (Jinja2 native, enable_thinking support) ───────────── */
 
 ion7_chat_templates_t* ion7_chat_templates_init(const struct llama_model* model, const char* tmpl_override)
 {
-    // API: common_chat_templates_init(model, override, bos_override="", eos_override="")
     auto ptr = common_chat_templates_init(model,
         tmpl_override ? tmpl_override : "",
-        "",   // bos_token_override - use model default
-        "");  // eos_token_override - use model default
+        "",   // bos_token: model default
+        "");  // eos_token: model default
     return (ion7_chat_templates_t*)ptr.release();
 }
 
@@ -65,6 +63,7 @@ int32_t ion7_chat_templates_apply(ion7_chat_templates_t* t, const char** roles, 
     else if (enable_thinking == 1)  inputs.enable_thinking = true;
     /* -1 = leave at default (true) */
 
+    inputs.messages.reserve(n_msgs);
     for (size_t i = 0; i < n_msgs; i++) {
         common_chat_msg msg;
         msg.role    = roles[i]    ? roles[i]    : "";
@@ -105,11 +104,10 @@ struct llama_sampler* ion7_reasoning_budget_init(const struct llama_model* model
 {
     const llama_vocab* vocab = llama_model_get_vocab(model);
 
-    /* Tokenize the Qwen3/3.5 thinking delimiters.
-     * <think>\n  →  start of thinking block
-     * \n</think>\n  →  end of thinking block
-     * \n</think>\n  →  forced close token when budget is exceeded
-     * <think>\n\n</think>\n  →  prefill for enable_thinking=false  */
+    /* Thinking block delimiters:
+     * start   : "<think>\n"
+     * end     : "\n</think>\n"
+     * prefill : "<think>\n\n</think>\n"  (enable_thinking=false) */
     auto tokenize_str = [&](const std::string& s) -> std::vector<llama_token> {
         std::vector<llama_token> toks(s.size() + 8);
         int n = llama_tokenize(vocab, s.c_str(), (int32_t)s.size(), toks.data(), (int32_t)toks.size(), false, true);
@@ -120,7 +118,7 @@ struct llama_sampler* ion7_reasoning_budget_init(const struct llama_model* model
 
     auto start_toks   = tokenize_str("<think>\n");
     auto end_toks     = tokenize_str("\n</think>\n");
-    auto forced_toks  = tokenize_str("\n</think>\n");
+    auto forced_toks  = end_toks;   /* same delimiter as end_toks */
     auto prefill_toks = tokenize_str("<think>\n\n</think>\n");
 
     return common_reasoning_budget_init(vocab, start_toks, end_toks, forced_toks, n_budget, prefill_toks);
@@ -130,7 +128,7 @@ struct llama_sampler* ion7_reasoning_budget_init(const struct llama_model* model
  * ── common_sampler (DRY, XTC, grammar_lazy, mirostat, logit bias) ────────
  * ======================================================================= */
 
-/* Internal wrapper so we can store params alongside the sampler */
+/* common_sampler with its owning parameters */
 struct ion7_csampler {
     common_sampler* smpl;
 };
@@ -212,6 +210,15 @@ void ion7_csampler_accept(ion7_csampler_t* s, int32_t token)
     if (s) common_sampler_accept(s->smpl, token, true);
 }
 
+/* ion7_csampler_sample_accept - sample + accept in one call */
+int32_t ion7_csampler_sample_accept(ion7_csampler_t* s, struct llama_context* ctx, int idx, int grammar_first)
+{
+    if (!s) return -1;
+    llama_token tok = common_sampler_sample(s->smpl, ctx, idx, (bool)grammar_first);
+    common_sampler_accept(s->smpl, tok, true);
+    return tok;
+}
+
 void ion7_csampler_reset(ion7_csampler_t* s)
 {
     if (s) common_sampler_reset(s->smpl);
@@ -220,8 +227,7 @@ void ion7_csampler_reset(ion7_csampler_t* s)
 int32_t ion7_csampler_last(const ion7_csampler_t* s)
 {
     if (!s) return -1;
-    /* common_sampler_last throws when the internal ring buffer is empty
-     * Guard so callers get -1 instead of a crash. */
+    /* common_sampler_last throws if the ring buffer is empty; returns -1 */
     try {
         return common_sampler_last(s->smpl);
     } catch (...) {
@@ -240,8 +246,9 @@ uint32_t ion7_csampler_get_seed(const ion7_csampler_t* s)
  * ======================================================================= */
 
 struct ion7_speculative {
-    common_speculative*      spec;
+    common_speculative*       spec;
     common_params_speculative params;
+    llama_tokens              toks_buf; /* prompt buffer, shared between begin() and draft() */
 };
 
 ion7_speculative_t* ion7_speculative_init(
@@ -253,10 +260,9 @@ ion7_speculative_t* ion7_speculative_init(
     w->params.type      = (common_speculative_type)type;
     w->params.n_max     = (n_draft > 0) ? n_draft : 16;
     w->params.n_min     = 0;
-    /* ngram_min/ngram_max map to the n-gram table sizes */
     if (ngram_min > 0) w->params.ngram_size_n = (uint16_t)ngram_min;
     if (ngram_max > 0) w->params.ngram_size_m = (uint16_t)ngram_max;
-    /* For ION7_SPEC_DRAFT the draft model is taken from the draft context */
+    /* draft model required only for ION7_SPEC_DRAFT */
     if (ctx_dft)
         w->params.model_dft = const_cast<llama_model*>(llama_get_model(ctx_dft));
     w->spec = common_speculative_init(w->params, ctx_tgt);
@@ -274,18 +280,18 @@ void ion7_speculative_free(ion7_speculative_t* spec)
 void ion7_speculative_begin(ion7_speculative_t* spec, const int32_t* prompt, int n_prompt)
 {
     if (!spec || !prompt) return;
-    llama_tokens toks(prompt, prompt + n_prompt);
-    common_speculative_begin(spec->spec, toks);
+    spec->toks_buf.assign(prompt, prompt + n_prompt);
+    common_speculative_begin(spec->spec, spec->toks_buf);
 }
 
 int ion7_speculative_draft(ion7_speculative_t* spec, const int32_t* prompt, int n_prompt, int32_t last_token, int32_t* out_draft, int max_draft)
 {
     if (!spec || !prompt || !out_draft) return 0;
-    llama_tokens toks(prompt, prompt + n_prompt);
+    spec->toks_buf.assign(prompt, prompt + n_prompt);
     llama_tokens draft = common_speculative_draft(
-        spec->spec, spec->params, toks, last_token);
+        spec->spec, spec->params, spec->toks_buf, last_token);
     int n = (int)std::min((size_t)max_draft, draft.size());
-    for (int i = 0; i < n; i++) out_draft[i] = draft[i];
+    memcpy(out_draft, draft.data(), (size_t)n * sizeof(int32_t));
     return n;
 }
 
@@ -326,19 +332,28 @@ int ion7_chat_parse(ion7_chat_templates_t* t, const char* text, int enable_think
     safe_copy(msg.content, content_buf, content_len, &truncated);
     safe_copy(msg.reasoning_content, thinking_buf, thinking_len, &truncated);
 
-    /* Serialise tool_calls to a JSON array string */
-    std::ostringstream tools_json;
-    tools_json << "[";
-    for (size_t i = 0; i < msg.tool_calls.size(); i++) {
-        if (i > 0) tools_json << ",";
-        const auto& tc = msg.tool_calls[i];
-        tools_json << "{\"name\":\"" << tc.name
-                   << "\",\"arguments\":" << tc.arguments
-                   << ",\"id\":\"" << tc.id << "\"}";
+    /* tool_calls as a JSON array; empty response → "[]" */
+    if (msg.tool_calls.empty()) {
+        if (tools_buf && tools_len >= 3) { memcpy(tools_buf, "[]", 3); }
+        if (out_has_tools) *out_has_tools = 0;
+    } else {
+        std::string tools_json;
+        tools_json.reserve(128 * msg.tool_calls.size());
+        tools_json += '[';
+        for (size_t i = 0; i < msg.tool_calls.size(); i++) {
+            if (i > 0) tools_json += ',';
+            const auto& tc = msg.tool_calls[i];
+            tools_json += "{\"name\":\"";
+            tools_json += tc.name;
+            tools_json += "\",\"arguments\":";
+            tools_json += tc.arguments;
+            tools_json += ",\"id\":\"";
+            tools_json += tc.id;
+            tools_json += "\"}";
+        }
+        tools_json += ']';
+        safe_copy(tools_json, tools_buf, tools_len, &truncated);
+        if (out_has_tools) *out_has_tools = 1;
     }
-    tools_json << "]";
-    safe_copy(tools_json.str(), tools_buf, tools_len, &truncated);
-
-    if (out_has_tools) *out_has_tools = msg.tool_calls.empty() ? 0 : 1;
     return truncated ? 1 : 0;
 }

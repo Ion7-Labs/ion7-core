@@ -114,11 +114,11 @@ try:
     mem_after = rss_mb()
 
     record("model_load", {
-        "load_ms":      round(load_ms, 2),
-        "rss_delta_mb": round(mem_after - mem_before, 1),
-        "n_gpu_layers": ngl,
-        "n_batch": 512,
-        "n_ubatch": 512,
+        "load_ms":        round(load_ms, 2),
+        "rss_delta_mb":   round(mem_after - mem_before, 1),
+        "n_gpu_layers":   ngl,
+        "n_batch":        512,
+        "n_ubatch":       512,
     })
 except Exception as e:
     print(json.dumps({"error": f"Model load failed: {e}"}))
@@ -318,17 +318,29 @@ except Exception as e:
         record("kv_snapshot", {"supported": False, "error": str(e2)})
 
 # ── 7. Detokenization ─────────────────────────────────────────────────────────
+# N_DTOK=1000 calls per measurement round - matches bench_lua.lua exactly.
+# Same text, same add_bos=False so token counts are identical on both sides.
+
+N_DTOK = 1000
+DTOK_TEXT = b"The quick brown fox jumps over the lazy dog."
+sample_tokens = llm.tokenize(DTOK_TEXT, add_bos=False)
+# Warm-up
+llm.detokenize(sample_tokens)
 
 detok_times = []
-sample_tokens = llm.tokenize(b"Hello world this is a test of detokenization speed", add_bos=False)
-for _ in range(args.n_repeat * 10):
+for _ in range(args.n_repeat):
     t0 = now_ms()
-    text = llm.detokenize(sample_tokens)
-    detok_times.append(now_ms() - t0)
+    for _ in range(N_DTOK):
+        llm.detokenize(sample_tokens)
+    detok_times.append((now_ms() - t0) / N_DTOK)  # ms per call
 
+med_per_call = median(detok_times)
 record("detokenization", {
     "n_tokens":     len(sample_tokens),
-    "median_ms":    round(median(detok_times), 4),
+    "n_calls":      N_DTOK,
+    "median_ms":    round(med_per_call, 4),
+    "calls_per_s":  round(1000 / med_per_call, 0) if med_per_call > 0 else 0,
+    "note":         f"{N_DTOK} calls per measurement, median ms/call reported",
 })
 
 # ── 8. Memory footprint ───────────────────────────────────────────────────────
@@ -340,41 +352,15 @@ record("memory", {
 })
 
 # ── 9. Context creation ─────────────────────────────────────────────────────
-# llama-cpp-python doesn't expose context creation separately from model load.
-# We time the Llama() constructor with the model already cached by the OS.
-# This measures context allocation overhead (not model loading from disk).
-
-try:
-    ctx_times = []
-    for _ in range(3):
-        gc.collect()
-        t0 = now_ms()
-        tmp_llm = Llama(
-            model_path   = MODEL,
-            n_gpu_layers = ngl,
-            n_ctx        = args.n_ctx,
-            n_batch      = 512,
-            verbose      = False,
-            seed         = args.seed,
-        )
-        elapsed = now_ms() - t0
-        ctx_times.append(elapsed)
-        # Free the temporary instance before next iteration
-        del tmp_llm
-        gc.collect()
-
-    record("context_creation", {
-        "median_ms": round(median(ctx_times), 2),
-        "all_ms":    [round(t, 2) for t in ctx_times],
-        "note":      "Llama() constructor (model cached in OS page cache)",
-    })
-except Exception as e:
-    # Creating multiple instances may fail on low VRAM
-    record("context_creation", {
-        "median_ms": -1,
-        "error":     str(e),
-        "note":      "Llama() constructor failed - likely VRAM exhaustion",
-    })
+# llama-cpp-python merges model load and context creation in the Llama()
+# constructor - there is no public API to create a context from an already-
+# loaded model.  Timing Llama() here would conflate model I/O with KV cache
+# allocation, making the comparison with ion7-core meaningless.
+# We therefore report this benchmark as not applicable for llama-cpp-python.
+record("context_creation", {
+    "median_ms": None,
+    "note":      "N/A - llama-cpp-python has no isolated context-creation API",
+})
 
 # ── 10. Single-token decode loop ────────────────────────────────────────────
 # Generate tokens one at a time in a tight loop.

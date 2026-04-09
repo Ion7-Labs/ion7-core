@@ -537,14 +537,59 @@ end)
 
 T.suite("Speculative constants")
 
-T.test("spec constants are correct", function()
-    -- Values must match common_speculative_type enum in common/common.h
-    T.eq(C.SPEC_NONE,         0)
-    T.eq(C.SPEC_DRAFT,        1)
-    T.eq(C.SPEC_EAGLE3,       2)
-    T.eq(C.SPEC_NGRAM_SIMPLE, 3)
-    T.eq(C.SPEC_NGRAM_MAP_K,  4)
-    T.eq(C.SPEC_NGRAM_CACHE,  7)
+T.test("spec constants are 1:1 with common_speculative_type / ion7_bridge.h", function()
+    T.eq(C.SPEC_NONE,          0)
+    T.eq(C.SPEC_DRAFT,         1)
+    T.eq(C.SPEC_EAGLE3,        2)
+    T.eq(C.SPEC_NGRAM_SIMPLE,  3)
+    T.eq(C.SPEC_NGRAM_MAP_K,   4)
+    T.eq(C.SPEC_NGRAM_MAP_K4V, 5)
+    T.eq(C.SPEC_NGRAM_MOD,     6)
+    T.eq(C.SPEC_NGRAM_CACHE,   7)
+end)
+
+-- ══════════════════════════════════════════════════════════════════
+-- Logprob / Entropy (ion7_logprob, ion7_entropy)
+-- ══════════════════════════════════════════════════════════════════
+
+T.suite("Logprob / Entropy (bridge_utils)")
+
+T.test("ion7_logprob returns a negative float after decode", function()
+    local ctx  = model:context({ n_ctx = 512, n_gpu_layers = 0 })
+    local v    = model:vocab()
+    local tokens, n = v:tokenize("Hello", false, false)
+    ctx:decode(tokens, n)
+    local lp = B.ion7_logprob(ctx:ptr(), 0, v:bos())
+    T.ok(type(tonumber(lp)) == "number", "logprob should be a number")
+    T.ok(tonumber(lp) <= 0.0, "log-probability must be <= 0")
+    T.ok(tonumber(lp) > -1e9, "log-probability should be finite")
+    ctx:free()
+end)
+
+T.test("ion7_entropy returns a non-negative float after decode", function()
+    local ctx = model:context({ n_ctx = 512, n_gpu_layers = 0 })
+    local v   = model:vocab()
+    local tokens, n = v:tokenize("Hello", false, false)
+    ctx:decode(tokens, n)
+    local H = B.ion7_entropy(ctx:ptr(), 0)
+    T.ok(type(tonumber(H)) == "number", "entropy should be a number")
+    T.ok(tonumber(H) >= 0.0, "entropy must be >= 0")
+    ctx:free()
+end)
+
+T.test("ctx:logprob() and ctx:entropy() delegate to bridge", function()
+    local ctx = model:context({ n_ctx = 512, n_gpu_layers = 0 })
+    local v   = model:vocab()
+    local tokens, n = v:tokenize("Hi", false, false)
+    ctx:decode(tokens, n)
+    local lp = ctx:logprob(0, v:bos())
+    local H  = ctx:entropy(0)
+    T.ok(lp <= 0.0,  "ctx:logprob should be <= 0")
+    T.ok(H  >= 0.0,  "ctx:entropy should be >= 0")
+    -- Both should agree with direct bridge calls
+    local lp2 = tonumber(B.ion7_logprob(ctx:ptr(), 0, v:bos()))
+    T.ok(math.abs(lp - lp2) < 1e-6, "ctx:logprob matches B.ion7_logprob")
+    ctx:free()
 end)
 
 -- ══════════════════════════════════════════════════════════════════

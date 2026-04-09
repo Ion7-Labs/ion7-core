@@ -47,10 +47,15 @@ if [ -z "${ION7_MODEL:-}" ]; then
     exit 1
 fi
 
-# Hint for ION7_LIB_DIR if not set
+# Resolve ION7_LIB_DIR: accept LLAMA_LIB (path to .so) as an alias
+if [ -z "${ION7_LIB_DIR:-}" ] && [ -n "${LLAMA_LIB:-}" ]; then
+    export ION7_LIB_DIR="${LLAMA_LIB}"
+fi
+
+# Auto-detect libllama.so when neither variable is set
 if [ -z "${ION7_LIB_DIR:-}" ]; then
-    # Try to auto-find libllama.so
-    FOUND_LIB=$(find "${HOME}" -name "libllama.so" 2>/dev/null | head -1)
+    # find -print -quit avoids SIGPIPE that `find ... | head -1` causes under pipefail
+    FOUND_LIB=$(find "${HOME}" -name "libllama.so" -print -quit 2>/dev/null)
     if [ -n "$FOUND_LIB" ]; then
         export ION7_LIB_DIR="$(dirname "$FOUND_LIB")"
         echo -e "${DIM}[auto] ION7_LIB_DIR=${ION7_LIB_DIR}${NC}"
@@ -187,6 +192,10 @@ row "GPU layers" "$lua_ngl" "$(jq_py '.benchmarks.model_load.n_gpu_layers')" ""
 lua_size=$(jq_lua ".benchmarks.model_load.size_gb // \"N/A\"")
 row "Model size" "${lua_size}GB" "N/A" ""
 
+lua_rss_delta=$(jq_lua ".benchmarks.model_load.rss_delta_mb // \"N/A\"")
+py_rss_delta=$(jq_py  ".benchmarks.model_load.rss_delta_mb // \"N/A\"")
+row "RSS delta (load)" "${lua_rss_delta}MB" "${py_rss_delta}MB" ""
+
 # 2. Tokenization
 header "2. Tokenization"
 lua_tok=$(jq_lua ".benchmarks.tokenization.avg_tokens_per_s")
@@ -284,7 +293,26 @@ header "7. Detokenization"
 lua_dtok=$(jq_lua ".benchmarks.detokenization.median_ms")
 py_dtok=$(jq_py  ".benchmarks.detokenization.median_ms")
 r=$(ratio_ms "$lua_dtok" "$py_dtok")
-row "Median ms/call" "$lua_dtok" "$py_dtok" "$r"
+row "Median ms/call" "${lua_dtok}ms" "${py_dtok}ms" "$r"
+lua_dtok_cps=$(jq_lua ".benchmarks.detokenization.calls_per_s")
+py_dtok_cps=$(jq_py  ".benchmarks.detokenization.calls_per_s")
+r2=$(ratio_tok_s "$lua_dtok_cps" "$py_dtok_cps")
+row "Throughput (calls/s)" "$lua_dtok_cps" "$py_dtok_cps" "$r2"
+
+# 7b. Memory footprint
+header "7b. Memory Footprint"
+lua_rss=$(jq_lua ".benchmarks.memory.rss_after_load_mb // \"N/A\"")
+py_rss=$(jq_py  ".benchmarks.memory.rss_after_load_mb // \"N/A\"")
+lua_rss_d=$(jq_lua ".benchmarks.memory.rss_delta_load_mb // \"N/A\"")
+py_rss_d=$(jq_py  ".benchmarks.memory.rss_delta_load_mb // \"N/A\"")
+row "RSS after load (MB)"  "${lua_rss}MB"   "${py_rss}MB"   ""
+row "RSS delta load (MB)"  "${lua_rss_d}MB" "${py_rss_d}MB" "$(python3 -c "
+a,b='${lua_rss_d}','${py_rss_d}'
+try:
+    r=float(b)/float(a)
+    print(f'{r:.2f}x less' if r>1 else f'{1/r:.2f}x more')
+except: print('N/A')
+" 2>/dev/null)"
 
 # 8. Sampler overhead (ion7-core only)
 header "8. Sampler Chain Overhead (ion7-core only)"
@@ -305,11 +333,14 @@ row "kv=q4_0 (ms)" "${lua_ctx_q4:-N/A}"  "N/A" ""
 
 # 10. Single-token decode
 header "10. Single-Token Decode"
-lua_nocache=$(jq_lua ".benchmarks.decode_single.no_cache.calls_per_s // \"N/A\"")
-lua_cached=$(jq_lua  ".benchmarks.decode_single.with_cache.calls_per_s // \"N/A\"")
-py_single=$(jq_py    ".benchmarks.single_token_loop.tokens_per_s // \"N/A\"")
-row "No KV cache (calls/s)"   "${lua_nocache}" "N/A" ""
-row "KV accumulate (calls/s)" "${lua_cached}"  "${py_single}" "$(ratio_tok_s "${lua_cached:-0}" "${py_single:-0}")"
+lua_stok=$(jq_lua ".benchmarks.single_token_loop.tokens_per_s // \"N/A\"")
+lua_sms=$(jq_lua  ".benchmarks.single_token_loop.median_ms_per_token // \"N/A\"")
+py_stok=$(jq_py   ".benchmarks.single_token_loop.tokens_per_s // \"N/A\"")
+py_sms=$(jq_py    ".benchmarks.single_token_loop.median_ms_per_token // \"N/A\"")
+r_stok=$(ratio_tok_s "$lua_stok" "$py_stok")
+r_sms=$(ratio_ms "$lua_sms" "$py_sms")
+row "Throughput (tok/s)"   "$lua_stok" "$py_stok" "$r_stok"
+row "Median ms/token"      "${lua_sms}ms" "${py_sms}ms" "$r_sms"
 
 # 11. KV operations (ion7-core only)
 header "11. KV Operations (ion7-core only)"
@@ -340,12 +371,14 @@ row "Callback overhead"         "${lua_oh}%"  "N/A" ""
 header "14. Vocab Operations"
 lua_bos=$(jq_lua ".benchmarks.vocab_operations.bos.calls_per_s // \"N/A\"")
 lua_eog=$(jq_lua ".benchmarks.vocab_operations.is_eog.calls_per_s // \"N/A\"")
-py_tok_ops=$(jq_py ".benchmarks.vocab_operations.tokenize.calls_per_s // \"N/A\"")
-py_dtok_ops=$(jq_py ".benchmarks.vocab_operations.detokenize.calls_per_s // \"N/A\"")
-row "bos() (calls/s)"             "$lua_bos"  "N/A"          ""
-row "is_eog() (calls/s)"          "$lua_eog"  "N/A"          ""
-row "tokenize() loop (calls/s)"   "N/A"       "$py_tok_ops"  ""
-row "detokenize() loop (calls/s)" "N/A"       "$py_dtok_ops" ""
+lua_tok_ops=$(jq_lua  ".benchmarks.vocab_operations.tokenize.calls_per_s // \"N/A\"")
+lua_dtok_ops=$(jq_lua ".benchmarks.vocab_operations.detokenize.calls_per_s // \"N/A\"")
+py_tok_ops=$(jq_py    ".benchmarks.vocab_operations.tokenize.calls_per_s // \"N/A\"")
+py_dtok_ops=$(jq_py   ".benchmarks.vocab_operations.detokenize.calls_per_s // \"N/A\"")
+row "bos() (calls/s)"             "$lua_bos"     "N/A"           ""
+row "is_eog() (calls/s)"          "$lua_eog"     "N/A"           ""
+row "tokenize() loop (calls/s)"   "$lua_tok_ops"  "$py_tok_ops"  "$(ratio_tok_s "$lua_tok_ops"  "$py_tok_ops")"
+row "detokenize() loop (calls/s)" "$lua_dtok_ops" "$py_dtok_ops" "$(ratio_tok_s "$lua_dtok_ops" "$py_dtok_ops")"
 
 # ── Errors ────────────────────────────────────────────────────────────────────
 lua_errors=$(jq_lua "[.errors[]] | length")

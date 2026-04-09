@@ -9,6 +9,8 @@
 /* libcommon - C++ layer */
 #include "common.h"
 
+#include "ggml-opt.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -16,14 +18,16 @@
 /* =========================================================================
  * ── Training (llama_opt API) ──────────────────────────────────────────── */
 
-/* Internal: simple fixed learning rate for opt param callback */
+/* Userdata for the optimizer params callback - single constant learning rate. */
 struct ion7_lr_params { float lr; };
 
-static ggml_opt_optimizer_params _ion7_lr_callback(void* ud)
+/* ggml_opt_get_optimizer_params implementation: constant lr for AdamW and SGD. */
+static ggml_opt_optimizer_params ion7_lr_callback(void* ud)
 {
     ion7_lr_params* p = (ion7_lr_params*)ud;
     ggml_opt_optimizer_params op = ggml_opt_get_default_optimizer_params(ud);
     op.adamw.alpha = p->lr;
+    op.sgd.alpha   = p->lr;
     return op;
 }
 
@@ -44,7 +48,7 @@ ion7_opt_state_t* ion7_opt_init(struct llama_context* ctx, struct llama_model* m
     p.n_ctx_train    = 0;  /* use context size */
     p.param_filter   = llama_opt_param_filter_all;
     p.param_filter_ud = nullptr;
-    p.get_opt_pars   = _ion7_lr_callback;
+    p.get_opt_pars   = ion7_lr_callback;
     p.get_opt_pars_ud = (void*)lrp;
     p.optimizer_type = (optimizer == 1) ? GGML_OPT_OPTIMIZER_TYPE_SGD : GGML_OPT_OPTIMIZER_TYPE_ADAMW;
 
@@ -88,8 +92,8 @@ float ion7_opt_epoch(struct llama_context* ctx, ggml_opt_dataset_t dataset, floa
     ggml_opt_result_t result_train = ggml_opt_result_init();
     ggml_opt_result_t result_eval  = ggml_opt_result_init();
 
-    int64_t n_data       = ggml_opt_dataset_data(dataset)->ne[1];
-    int64_t idata_split  = (int64_t)(n_data * (1.0f - val_split));
+    int64_t n_data      = ggml_opt_dataset_data(dataset)->ne[1];
+    int64_t idata_split = (int64_t)((double)n_data * (1.0 - (double)val_split));
 
     llama_opt_epoch(ctx, dataset, result_train, result_eval, idata_split, nullptr, nullptr);
 

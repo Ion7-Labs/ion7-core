@@ -15,10 +15,20 @@
 ---   print(text)  --> "Hello, world!"
 
 local Loader = require "ion7.core.ffi.loader"
+local ffi    = require "ffi"
+
+-- ── Pre-parsed VLA ctypes ─────────────────────────────────────────────────────
+-- doc: "parse the cdecl only once and get its ctype with ffi.typeof().
+--       Then use the ctype as a constructor repeatedly."
+-- This avoids the C-declaration string parse on every ffi.new() call.
+local _i32arr  = ffi.typeof("int32_t[?]")
+local _chararr = ffi.typeof("char[?]")
+local _cptrarr = ffi.typeof("const char*[?]")
 
 -- ── Internal buffer for token-to-piece conversion ─────────────────────────────
 
 local PIECE_BUF_SIZE  = 256
+local PIECE_BIG_SIZE  = 4096    -- Pre-alloc for rare oversized pieces (avoids alloc on fallback)
 local TMPL_BUF_SIZE   = 131072  -- 128 KB for chat template output
 local DETOK_BUF_SIZE  = 65536   -- 64  KB for detokenize output
 
@@ -31,9 +41,11 @@ local DETOK_BUF_SIZE  = 65536   -- 64  KB for detokenize output
 --- @field _bridge cdata   ion7_bridge.so namespace.
 --- @field _ffi    cdata   LuaJIT ffi namespace.
 --- @field _tmpls  cdata   ion7_chat_templates_t* (owned, freed via ffi.gc).
---- @field _piece_buf cdata Scratch buffer for token-to-piece conversion.
---- @field _tmpl_buf  cdata Scratch buffer for chat template output.
---- @field _dtok_buf  cdata Scratch buffer for detokenize output.
+--- @field _piece_buf   cdata  Scratch buffer for token-to-piece conversion.
+--- @field _piece_big   cdata  Pre-alloc fallback buffer for oversized pieces.
+--- @field _piece_cache table  Weak-value cache: token id → piece string.
+--- @field _tmpl_buf    cdata  Scratch buffer for chat template output.
+--- @field _dtok_buf    cdata  Scratch buffer for detokenize output.
 local Vocab = {}
 Vocab.__index = Vocab
 
@@ -65,9 +77,11 @@ function Vocab.new(lib, model, ptr)
         _ffi    = ffi,
         _tmpls  = tmpls,
         -- Pre-allocated scratch buffers
-        _piece_buf = ffi.new("char[?]", PIECE_BUF_SIZE),
-        _tmpl_buf  = ffi.new("char[?]", TMPL_BUF_SIZE),
-        _dtok_buf  = ffi.new("char[?]", DETOK_BUF_SIZE),
+        _piece_buf   = _chararr(PIECE_BUF_SIZE),
+        _piece_big   = _chararr(PIECE_BIG_SIZE),  -- reused for oversized pieces
+        _piece_cache = setmetatable({}, {__mode = "v"}),  -- weak-value token→string
+        _tmpl_buf    = _chararr(TMPL_BUF_SIZE),
+        _dtok_buf    = _chararr(DETOK_BUF_SIZE),
     }, Vocab)
 end
 
@@ -96,7 +110,7 @@ function Vocab:tokenize(text, add_special, parse_special)
 
     -- Estimate worst case: 1 token per byte + 16 for special tokens
     local max_tokens = math.max(#text + 16, 64)
-    local buf        = self._ffi.new("int32_t[?]", max_tokens)
+    local buf        = _i32arr(max_tokens)
     local n          = self._lib.llama_tokenize(
         self._ptr, text, #text,
         buf, max_tokens,
@@ -105,7 +119,7 @@ function Vocab:tokenize(text, add_special, parse_special)
     if n < 0 then
         -- Buffer was too small; reallocate and retry
         max_tokens = -n + 16
-        buf        = self._ffi.new("int32_t[?]", max_tokens)
+        buf        = _i32arr(max_tokens)
         n          = self._lib.llama_tokenize(
             self._ptr, text, #text,
             buf, max_tokens,
@@ -148,19 +162,27 @@ end
 --- @return string
 function Vocab:piece(token, special)
     if special == nil then special = true end
+    local cache = self._piece_cache
+    local cached = cache[token]
+    if cached then return cached end
+
     local n = self._lib.llama_token_to_piece(
         self._ptr, token,
         self._piece_buf, PIECE_BUF_SIZE,
         0, special
     )
+    local s
     if n < 0 then
-        -- Expand buffer for large pieces (rare)
-        local big = self._ffi.new("char[?]", -n + 1)
-        n = self._lib.llama_token_to_piece(
-            self._ptr, token, big, -n + 1, 0, special)
-        return n > 0 and self._ffi.string(big, n) or ""
+        -- Expand into pre-allocated big buffer; only heap-alloc if oversized
+        local sz  = -n + 1
+        local big = sz <= PIECE_BIG_SIZE and self._piece_big or _chararr(sz)
+        n = self._lib.llama_token_to_piece(self._ptr, token, big, sz, 0, special)
+        s = n > 0 and self._ffi.string(big, n) or ""
+    else
+        s = n > 0 and self._ffi.string(self._piece_buf, n) or ""
     end
-    return n > 0 and self._ffi.string(self._piece_buf, n) or ""
+    cache[token] = s
+    return s
 end
 
 --- Get the raw text representation of a token (without lstrip behavior).
@@ -247,7 +269,7 @@ end
 function Vocab:builtin_templates()
     local ffi  = self._ffi
     local n    = 64
-    local bufs = ffi.new("const char*[?]", n)
+    local bufs = _cptrarr(n)
     local count = self._lib.llama_chat_builtin_templates(bufs, n)
     if count < 0 then return {} end
     local result = {}
@@ -275,8 +297,8 @@ function Vocab:apply_template(messages, add_ass, enable_thinking)
     -- Build parallel C string pointer arrays.
     -- Lua strings are anchored in role_refs/content_refs to prevent GC
     -- during the bridge call (ffi pointers don't pin Lua strings).
-    local roles    = ffi.new("const char*[?]", n)
-    local contents = ffi.new("const char*[?]", n)
+    local roles    = _cptrarr(n)
+    local contents = _cptrarr(n)
     local role_refs    = {}
     local content_refs = {}
 
@@ -300,7 +322,7 @@ function Vocab:apply_template(messages, add_ass, enable_thinking)
         error("[ion7.core.vocab] chat template failed", 2)
     end
     if needed > TMPL_BUF_SIZE then
-        local big = ffi.new("char[?]", needed)
+        local big = _chararr(needed)
         needed = bridge.ion7_chat_templates_apply(
             self._tmpls,
             roles, contents, n,

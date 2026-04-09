@@ -159,7 +159,7 @@ int32_t     ion7_model_n_layer      (const struct llama_model* m);
 int32_t     ion7_model_n_head       (const struct llama_model* m);
 int32_t     ion7_model_n_head_kv    (const struct llama_model* m);
 int32_t     ion7_model_n_swa        (const struct llama_model* m);
-int32_t     ion7_model_n_cls_out    (const struct llama_model* m);
+uint32_t    ion7_model_n_cls_out    (const struct llama_model* m);
 int         ion7_model_has_encoder  (const struct llama_model* m);
 int         ion7_model_has_decoder  (const struct llama_model* m);
 int         ion7_model_is_recurrent (const struct llama_model* m);
@@ -695,6 +695,13 @@ int32_t ion7_csampler_sample(ion7_csampler_t* s, struct llama_context* ctx,
 /** Notify the sampler that token was accepted (updates grammar, DRY, mirostat state). */
 void ion7_csampler_accept(ion7_csampler_t* s, int32_t token);
 
+/**
+ * Combined sample + accept in one bridge call - preferred hot-path variant.
+ * Equivalent to ion7_csampler_sample() followed by ion7_csampler_accept(),
+ * but with a single FFI boundary crossing per generated token.
+ */
+int32_t ion7_csampler_sample_accept(ion7_csampler_t* s, struct llama_context* ctx, int idx, int grammar_first);
+
 /** Reset all sampler state (grammar automaton, DRY history, mirostat). */
 void ion7_csampler_reset(ion7_csampler_t* s);
 
@@ -708,10 +715,16 @@ uint32_t ion7_csampler_get_seed(const ion7_csampler_t* s);
  * ── Speculative decoding (n-gram / draft model) ───────────────────────────
  * ======================================================================= */
 
-#define ION7_SPEC_NGRAM_SIMPLE  0  /**< Simple n-gram from recent context.       */
-#define ION7_SPEC_NGRAM_CACHE   1  /**< LRU n-gram cache (≈ Cacheback paper).    */
-#define ION7_SPEC_NGRAM_MAP_K   2  /**< N-gram map with prediction statistics.   */
-#define ION7_SPEC_DRAFT         3  /**< Separate lighter draft model (ctx_dft).  */
+/* 1:1 with common_speculative_type enum in common/common.h.
+ * Never remap these - breaking changes are intentional when llama.cpp changes.  */
+#define ION7_SPEC_NONE          0  /**< No speculative decoding.                 */
+#define ION7_SPEC_DRAFT         1  /**< Separate lighter draft model (ctx_dft).  */
+#define ION7_SPEC_EAGLE3        2  /**< EAGLE-3 draft heads on target model.     */
+#define ION7_SPEC_NGRAM_SIMPLE  3  /**< Simple n-gram from recent context.       */
+#define ION7_SPEC_NGRAM_MAP_K   4  /**< N-gram map with prediction statistics.   */
+#define ION7_SPEC_NGRAM_MAP_K4V 5  /**< N-gram map with k + 4 m-gram values.     */
+#define ION7_SPEC_NGRAM_MOD     6  /**< N-gram with modular prediction.          */
+#define ION7_SPEC_NGRAM_CACHE   7  /**< LRU n-gram cache (≈ Cacheback paper).    */
 
 /** Opaque handle to a common_speculative instance. */
 typedef struct ion7_speculative ion7_speculative_t;
@@ -1019,6 +1032,32 @@ int ion7_json_format(const char* json_str, char* out, size_t out_len);
  */
 int ion7_json_merge(const char* base, const char* overlay,
                      char* out, size_t out_len);
+
+/* =========================================================================
+ * ── Logprob / Entropy (compute-intensive - C faster than Lua for n_vocab) ─
+ * ======================================================================= */
+
+/**
+ * Compute the log-probability of token_id at batch position idx.
+ *
+ * Runs log-softmax over all logits in C - ~151k floats for Qwen3.5.
+ * Doing this in Lua costs ~50x more due to tonumber() conversion overhead.
+ *
+ * @param ctx       Inference context (must have logits enabled for idx).
+ * @param idx       Batch position (usually 0 after decode_single).
+ * @param token_id  Token whose probability to compute.
+ * @return          Log-probability (negative, closer to 0 = more likely).
+ */
+float ion7_logprob(struct llama_context* ctx, int32_t idx, int32_t token_id);
+
+/**
+ * Compute the Shannon entropy (in nats) of the logit distribution at idx.
+ *
+ * @param ctx  Inference context.
+ * @param idx  Batch position.
+ * @return     Entropy in nats (>= 0).
+ */
+float ion7_entropy(struct llama_context* ctx, int32_t idx);
 
 #ifdef __cplusplus
 }

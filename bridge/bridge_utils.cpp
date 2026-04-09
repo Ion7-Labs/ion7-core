@@ -22,6 +22,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
+#include <cfloat>
+#include <cmath>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -156,9 +158,8 @@ size_t ion7_tensor_nbytes(void* t)
     return t ? ggml_nbytes((const struct ggml_tensor*)t) : 0;
 }
 
-/* Copy tensor data to a pre-allocated F32 CPU buffer.
- * Handles GPU tensors via ggml_backend_tensor_get, converts F16/BF16 → F32.
- * Returns number of floats written, or -1 on error / unsupported type. */
+/* F32 extractor for tensors on any backend (CPU/GPU/Metal).
+ * F16 and BF16 are up-converted. Returns float count, -1 on unsupported type or capacity exceeded. */
 int ion7_tensor_copy_f32(void* t, float* dst, size_t dst_count)
 {
     if (!t || !dst || dst_count == 0) return -1;
@@ -246,7 +247,7 @@ void ion7_log_to_file(const char* path)
     if (path && path[0] != '\0') {
         g_log_file = fopen(path, "a");
     }
-    /* Re-register the callback so it picks up the new file */
+    /* Callback registration picks up the updated g_log_file. */
     llama_log_set(ion7_log_dispatch, nullptr);
 }
 
@@ -319,4 +320,49 @@ int ion7_json_merge(const char* base, const char* overlay, char* out, size_t out
             memcpy(out, s.c_str(), needed);
         return (int)needed;
     } catch (...) { return -1; }
+}
+
+/* =========================================================================
+ * ── Logprob / Entropy ────────────────────────────────────────────────────
+ * ======================================================================= */
+
+/* Shared state for log-softmax: max logit and partition function (exp sum). */
+struct LogSoftmaxState {
+    float*  logits;
+    int32_t n;
+    float   max_l;
+    double  sum;
+};
+
+/* Log-softmax setup shared by ion7_logprob and ion7_entropy. */
+static LogSoftmaxState log_softmax_prepare(struct llama_context* ctx, int32_t idx)
+{
+    LogSoftmaxState s = { nullptr, 0, -FLT_MAX, 0.0 };
+    s.logits = llama_get_logits_ith(ctx, idx);
+    if (!s.logits) return s;
+    s.n = llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(ctx)));
+    for (int32_t i = 0; i < s.n; ++i)
+        if (s.logits[i] > s.max_l) s.max_l = s.logits[i];
+    for (int32_t i = 0; i < s.n; ++i)
+        s.sum += (double)expf(s.logits[i] - s.max_l);
+    return s;
+}
+
+float ion7_logprob(struct llama_context* ctx, int32_t idx, int32_t token_id)
+{
+    LogSoftmaxState s = log_softmax_prepare(ctx, idx);
+    if (!s.logits) return -FLT_MAX;
+    return s.logits[token_id] - s.max_l - (float)log(s.sum);
+}
+
+float ion7_entropy(struct llama_context* ctx, int32_t idx)
+{
+    LogSoftmaxState s = log_softmax_prepare(ctx, idx);
+    if (!s.logits) return 0.0f;
+    double H = 0.0;
+    for (int32_t i = 0; i < s.n; ++i) {
+        double p = (double)expf(s.logits[i] - s.max_l) / s.sum;
+        if (p > 0.0) H -= p * log(p);
+    }
+    return (float)H;
 }

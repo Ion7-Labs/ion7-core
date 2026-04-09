@@ -239,7 +239,7 @@ def chart_stability(stab: dict):
     fig.patch.set_facecolor(C_BG)
     fig.subplots_adjust(hspace=0.06)
 
-    # — RSS panel —
+    # - RSS panel -
     ax_rss.plot(tokens, rss, color=C_ION7, linewidth=2.5, zorder=3,
                 solid_capstyle="round")
     ax_rss.fill_between(tokens, rss, min(rss) - 1, alpha=0.10, color=C_ION7)
@@ -258,10 +258,10 @@ def chart_stability(stab: dict):
     resets  = stab.get("context_resets", "?")
     model   = stab.get("model", "")
     ax_rss.set_title(
-        f"Stability — {n_tok // 1000}k tokens · {resets} KV resets · {model}",
+        f"Stability - {n_tok // 1000}k tokens · {resets} KV resets · {model}",
         fontsize=12, fontweight="bold", pad=14, color=C_FG)
 
-    # — tok/s panel —
+    # - tok/s panel -
     ax_tps.plot(tokens, tps, color=C_GREEN, linewidth=2.5, zorder=3,
                 solid_capstyle="round")
     ax_tps.fill_between(tokens, tps, min(tps) - 0.2, alpha=0.10, color=C_GREEN)
@@ -304,7 +304,7 @@ def main():
     _out_dir = args.out
 
     if not os.path.exists(args.lua):
-        print(f"error: {args.lua} not found — run 'make bench' first", file=sys.stderr)
+        print(f"error: {args.lua} not found - run 'make bench' first", file=sys.stderr)
         sys.exit(1)
 
     with open(args.lua) as f:
@@ -315,7 +315,7 @@ def main():
         with open(args.python) as f:
             py = json.load(f)
     else:
-        print(f"  (no Python results at {args.python} — skipping speedup/compare)")
+        print(f"  (no Python results at {args.python} - skipping speedup/compare)")
 
     print("Generating charts...")
 
@@ -328,7 +328,7 @@ def main():
             stab = json.load(f)
         chart_stability(stab)
     else:
-        print(f"  (no stability results at {args.stability} — skipping)")
+        print(f"  (no stability results at {args.stability} - skipping)")
 
     print("Done.")
 

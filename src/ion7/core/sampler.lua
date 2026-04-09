@@ -460,10 +460,9 @@ function SamplerBuilder:build()
         elseif s.type == "custom" then
             assert(s.sampler and type(s.sampler.ptr) == "function",
                 "[ion7.core.sampler] custom requires a CustomSampler object")
-            -- Keep the CustomSampler alive to prevent GC of Lua callbacks
+            -- CustomSampler reference pinned here to prevent GC of its Lua callbacks.
             self._custom_refs = self._custom_refs or {}
             self._custom_refs[#self._custom_refs + 1] = s.sampler
-            -- Let the general llama_sampler_chain_add below handle the add
             smpl = s.sampler:ptr()
 
         else
@@ -479,7 +478,6 @@ function SamplerBuilder:build()
         lib.llama_sampler_chain_add(chain, smpl)
     end
 
-    -- Wrap in managed object
     return Sampler._wrap(ffi.gc(chain, lib.llama_sampler_free), lib)
 end
 
@@ -548,6 +546,17 @@ function Sampler:get(i)
     return setmetatable({ _chain = smpl, _lib = self._lib }, Sampler)
 end
 
+--- Remove the sampler at position i from the chain and return it (caller owns it).
+--- The returned sampler is NOT GC-managed - free it explicitly with Sampler:free()
+--- or add it to another chain.
+--- @param  i  number  0-based index.
+--- @return Sampler  Removed sampler (unowned).
+function Sampler:remove(i)
+    local smpl = self._lib.llama_sampler_chain_remove(self._chain, i)
+    if smpl == nil then return nil end
+    return setmetatable({ _chain = smpl, _lib = self._lib }, Sampler)
+end
+
 --- Clone this sampler chain.
 --- The clone is independently GC-managed.
 --- @return Sampler
@@ -588,8 +597,7 @@ end
 function Sampler:free()
     if self._chain == nil then return end
     local ffi = Loader.instance().ffi
-    -- Cancel the ffi.gc finalizer to prevent double-free,
-    -- then free the chain immediately.
+    -- GC finalizer disarmed before explicit release - prevents double-free.
     ffi.gc(self._chain, nil)
     self._lib.llama_sampler_free(self._chain)
     self._chain = nil
@@ -761,9 +769,7 @@ end
 --- @param  idx  number  Logit position (-1 = last decoded position).
 --- @return number  Token ID.
 function CSampler:sample(ctx, idx)
-    local tok = self._bridge.ion7_csampler_sample(self._ptr, ctx, idx or -1, 0)
-    self._bridge.ion7_csampler_accept(self._ptr, tok)
-    return tonumber(tok)
+    return tonumber(self._bridge.ion7_csampler_sample_accept(self._ptr, ctx, idx or -1, 0)) or -1
 end
 
 --- Explicitly notify the sampler that a token was accepted (rarely needed).

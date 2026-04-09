@@ -66,7 +66,7 @@ int32_t       ion7_model_n_layer       (const struct llama_model* m);
 int32_t       ion7_model_n_head        (const struct llama_model* m);
 int32_t       ion7_model_n_head_kv     (const struct llama_model* m);
 int32_t       ion7_model_n_swa         (const struct llama_model* m);
-int32_t       ion7_model_n_cls_out     (const struct llama_model* m);
+uint32_t      ion7_model_n_cls_out     (const struct llama_model* m);
 float         ion7_model_rope_freq_scale_train(const struct llama_model* m);
 const char*   ion7_model_rope_type     (const struct llama_model* m);
 const char*   ion7_model_cls_label     (const struct llama_model* m, uint32_t i);
@@ -112,9 +112,9 @@ size_t ion7_state_size     (struct llama_context* ctx);
 size_t ion7_state_get      (struct llama_context* ctx, uint8_t* buf, size_t sz);
 int    ion7_state_set      (struct llama_context* ctx, const uint8_t* buf, size_t sz);
 int    ion7_state_save_file(struct llama_context* ctx, const char* path,
-                             const int32_t* tokens, size_t n);
+                             const llama_token* tokens, size_t n);
 int    ion7_state_load_file(struct llama_context* ctx, const char* path,
-                             int32_t* out, size_t cap, size_t* n_out);
+                             llama_token* out, size_t cap, size_t* n_out);
 size_t ion7_state_seq_size (struct llama_context* ctx, int32_t seq_id);
 int    ion7_state_seq_save (struct llama_context* ctx, const char* path, int32_t seq_id);
 int    ion7_state_seq_load (struct llama_context* ctx, const char* path, int32_t dest_seq_id);
@@ -148,7 +148,7 @@ typedef struct ion7_opt_state ion7_opt_state_t;
 typedef struct ggml_opt_dataset* ggml_opt_dataset_t;
 ion7_opt_state_t*  ion7_opt_init (struct llama_context* ctx, struct llama_model* model, int optimizer, float lr);
 void ion7_opt_free (ion7_opt_state_t* state);
-ggml_opt_dataset_t ion7_opt_dataset_create(struct llama_context* ctx, const int32_t* tokens, int64_t n_tokens, int64_t n_ctx);
+ggml_opt_dataset_t ion7_opt_dataset_create(struct llama_context* ctx, const llama_token* tokens, int64_t n_tokens, int64_t n_ctx);
 void ion7_opt_dataset_free (ggml_opt_dataset_t dataset);
 float ion7_opt_epoch (struct llama_context* ctx, ggml_opt_dataset_t dataset, float val_split);
 
@@ -166,7 +166,7 @@ int                ion7_threadpool_n_threads(ion7_threadpool_t* tp);
 
 /* ---- Custom sampler ----------------------------------------------------- */
 typedef void (*ion7_sampler_apply_fn) (llama_token_data_array* cur_p, void* ud);
-typedef void (*ion7_sampler_accept_fn)(int32_t token,                  void* ud);
+typedef void (*ion7_sampler_accept_fn)(llama_token token,              void* ud);
 typedef void (*ion7_sampler_reset_fn) (void*                           ud);
 typedef void (*ion7_sampler_free_fn)  (void*                           ud);
 struct llama_sampler* ion7_sampler_create(
@@ -226,8 +226,9 @@ ion7_csampler_t* ion7_csampler_init(
     const float*                  logit_bias_val,
     int                           n_logit_bias);
 void     ion7_csampler_free    (ion7_csampler_t* s);
-int32_t  ion7_csampler_sample  (ion7_csampler_t* s, struct llama_context* ctx, int idx, int grammar_first);
-void     ion7_csampler_accept  (ion7_csampler_t* s, int32_t token);
+int32_t  ion7_csampler_sample        (ion7_csampler_t* s, struct llama_context* ctx, int idx, int grammar_first);
+void     ion7_csampler_accept        (ion7_csampler_t* s, int32_t token);
+int32_t  ion7_csampler_sample_accept (ion7_csampler_t* s, struct llama_context* ctx, int idx, int grammar_first);
 void     ion7_csampler_reset   (ion7_csampler_t* s);
 int32_t  ion7_csampler_last    (const ion7_csampler_t* s);
 uint32_t ion7_csampler_get_seed(const ion7_csampler_t* s);
@@ -313,6 +314,10 @@ int ion7_base64_decode(const char* src, size_t src_len, uint8_t* out, size_t out
 int ion7_json_validate(const char* json_str);
 int ion7_json_format  (const char* json_str, char* out, size_t out_len);
 int ion7_json_merge   (const char* base, const char* overlay, char* out, size_t out_len);
+
+/* ---- Logprob / Entropy (C-side, ~50x faster than Lua for n_vocab loop) - */
+float ion7_logprob(struct llama_context* ctx, int32_t idx, int32_t token_id);
+float ion7_entropy(struct llama_context* ctx, int32_t idx);
 ]]
 
 -- ── Internal ─────────────────────────────────────────────────────────────────
@@ -352,9 +357,9 @@ function Loader.init(opts)
     if _instance then return _instance end
     opts = opts or {}
 
-    -- Resolve source directory for bridge .so default path
+    -- Source directory of this file - default root for bridge .so path resolution.
     local sdir = debug.getinfo(1,"S").source:match("@(.+)/src/") or "."
-    -- libllama.so: check common system paths, no hardcoded fallback
+    -- Default libllama.so: first match in common system paths, nil when absent.
     local def_llama = (function()
         for _, p in ipairs({
             "/usr/local/lib/libllama.so",
@@ -379,8 +384,7 @@ function Loader.init(opts)
     local lib    = load_lib(llama_path,  "libllama.so")
     local bridge = load_lib(bridge_path, "ion7_bridge.so")
 
-    -- NOTE: ion7_backend_init() is NOT called here.
-    -- It is called exactly once by ion7.init() to avoid double-init.
+    -- ion7_backend_init() belongs to ion7.init() - one-time global init, not per-load.
     bridge.ion7_set_log_level(opts.log_level or 1)
 
     _instance = setmetatable({

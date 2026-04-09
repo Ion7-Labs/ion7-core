@@ -18,6 +18,9 @@
 --- @author Ion7-Labs
 --- @version 0.1.0
 
+local ffi    = require "ffi"
+local _i32arr = ffi.typeof("int32_t[?]")
+
 local Speculative = {}
 Speculative.__index = Speculative
 
@@ -58,7 +61,6 @@ function Speculative.new(ctx_tgt, ctx_dft, opts)
 
     local L      = require("ion7.core.ffi.loader").instance()
     local bridge = L.bridge
-    local ffi    = L.ffi
 
     local type_id = opts.type
     if type(type_id) == "string" then
@@ -79,12 +81,13 @@ function Speculative.new(ctx_tgt, ctx_dft, opts)
     assert(ptr ~= nil, "[ion7.core.speculative] init failed")
 
     return setmetatable({
-        _ptr     = ffi.gc(ptr, bridge.ion7_speculative_free),
-        _bridge  = bridge,
-        _ffi     = ffi,
-        _n_draft = n_draft,
-        -- Reusable C buffer for draft output (avoids alloc per call)
-        _buf     = ffi.new("int32_t[?]", n_draft + 1),
+        _ptr        = ffi.gc(ptr, bridge.ion7_speculative_free),
+        _bridge     = bridge,
+        _n_draft    = n_draft,
+        -- Reusable C buffers (avoid alloc per call)
+        _buf        = _i32arr(n_draft + 1),
+        _ctx_buf    = _i32arr(256),
+        _ctx_buf_sz = 256,
     }, Speculative)
 end
 
@@ -96,13 +99,16 @@ end
 ---
 --- @param  tokens  table  Lua 1-based array of int token IDs.
 function Speculative:begin(tokens)
-    local n   = #tokens
+    local n = #tokens
     if n == 0 then
         self._bridge.ion7_speculative_begin(self._ptr, nil, 0)
         return
     end
-    local ffi = self._ffi
-    local buf = ffi.new("int32_t[?]", n)
+    if n > self._ctx_buf_sz then
+        self._ctx_buf    = _i32arr(n)
+        self._ctx_buf_sz = n
+    end
+    local buf = self._ctx_buf
     for i = 1, n do buf[i - 1] = tokens[i] end
     self._bridge.ion7_speculative_begin(self._ptr, buf, n)
 end
@@ -118,28 +124,27 @@ end
 --- @return table     Lua 1-based array of up to n_draft candidate tokens.
 ---                   Empty when no prediction is available.
 function Speculative:draft(tokens, last_tok)
-    local n   = #tokens
-    local ffi = self._ffi
-
-    local ctx_buf
+    local n       = #tokens
+    local ctx_buf = nil
     if n > 0 then
-        ctx_buf = ffi.new("int32_t[?]", n)
+        if n > self._ctx_buf_sz then
+            self._ctx_buf    = _i32arr(n)
+            self._ctx_buf_sz = n
+        end
+        ctx_buf = self._ctx_buf
         for i = 1, n do ctx_buf[i - 1] = tokens[i] end
     end
 
     local k = tonumber(self._bridge.ion7_speculative_draft(
-        self._ptr,
-        ctx_buf or nil,
-        n,
-        last_tok,
-        self._buf,
-        self._n_draft))
+        self._ptr, ctx_buf, n, last_tok,
+        self._buf, self._n_draft))
 
     if k <= 0 then return {} end
 
     local result = {}
+    local buf    = self._buf
     for i = 0, k - 1 do
-        result[i + 1] = tonumber(self._buf[i])
+        result[i + 1] = buf[i]   -- int32_t auto-converts to Lua number
     end
     return result
 end
@@ -159,11 +164,11 @@ function Speculative:stats()
 end
 
 --- Explicitly free the speculative engine.
---- Optional — the GC finalizer handles it automatically.
+--- Optional - the GC finalizer handles it automatically.
 function Speculative:free()
     if self._ptr then
         self._bridge.ion7_speculative_free(self._ptr)
-        self._ptr = self._ffi.gc(self._ptr, nil)
+        self._ptr = ffi.gc(self._ptr, nil)
         self._ptr = nil
     end
 end

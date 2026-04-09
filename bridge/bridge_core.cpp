@@ -149,7 +149,7 @@ int32_t ion7_model_n_layer   (const struct llama_model* m) { return llama_model_
 int32_t ion7_model_n_head    (const struct llama_model* m) { return llama_model_n_head(m);     }
 int32_t ion7_model_n_head_kv (const struct llama_model* m) { return llama_model_n_head_kv(m);  }
 int32_t ion7_model_n_swa     (const struct llama_model* m) { return llama_model_n_swa(m);      }
-int32_t ion7_model_n_cls_out (const struct llama_model* m) { return (int32_t)llama_model_n_cls_out(m); }
+uint32_t ion7_model_n_cls_out(const struct llama_model* m) { return llama_model_n_cls_out(m); }
 float   ion7_model_rope_freq_scale_train(const struct llama_model* m) { return llama_model_rope_freq_scale_train(m); }
 int32_t ion7_model_decoder_start_token(const struct llama_model* m) { return (int32_t)llama_model_decoder_start_token(m); }
 
@@ -204,44 +204,62 @@ int ion7_params_fit(const char* path, int32_t* n_gpu_layers, uint32_t* n_ctx, ui
  * Context
  * ======================================================================= */
 
-struct llama_context* ion7_context_create(struct llama_model* model, uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max, int32_t n_threads, int32_t n_threads_batch, int flash_attn, int offload_kqv, int op_offload, int no_perf, int type_k, int type_v, int swa_full, int kv_unified)
+/* llama_context_params builder shared by ion7_context_create variants */
+static struct llama_context_params build_ctx_params(
+    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max,
+    int32_t n_threads, int32_t n_threads_batch,
+    int flash_attn, int offload_kqv, int op_offload,
+    int no_perf, int type_k, int type_v, int swa_full, int kv_unified)
 {
     struct llama_context_params p = llama_context_default_params();
-    p.n_ctx           = n_ctx    ? n_ctx    : 4096;
-    p.n_batch         = n_batch  ? n_batch  : 2048;
-    p.n_ubatch        = n_ubatch ? n_ubatch : p.n_batch;
+    p.n_ctx           = n_ctx     ? n_ctx     : 4096;
+    p.n_batch         = n_batch   ? n_batch   : 2048;
+    p.n_ubatch        = n_ubatch  ? n_ubatch  : p.n_batch;
     p.n_seq_max       = n_seq_max ? n_seq_max : 1;
-    p.n_threads       = n_threads > 0       ? n_threads       : 4;
+    p.n_threads       = n_threads       > 0 ? n_threads       : 4;
     p.n_threads_batch = n_threads_batch > 0 ? n_threads_batch : p.n_threads * 2;
-    p.flash_attn_type = (type_k != 1 || flash_attn) ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_AUTO;
-    p.offload_kqv  = (bool)offload_kqv;
-    p.op_offload   = (bool)op_offload;
-    p.no_perf      = (bool)no_perf;
-    p.swa_full     = (bool)swa_full;
-    p.kv_unified   = (bool)kv_unified;
-
+    /* quantised KV (type_k != 1 = not F16) requires explicit flash attention */
+    p.flash_attn_type = (flash_attn || type_k != 1)
+                            ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+                            : LLAMA_FLASH_ATTN_TYPE_AUTO;
+    p.offload_kqv = (bool)offload_kqv;
+    p.op_offload  = (bool)op_offload;
+    p.no_perf     = (bool)no_perf;
+    p.swa_full    = (bool)swa_full;
+    p.kv_unified  = (bool)kv_unified;
     if (type_k > 0) p.type_k = (enum ggml_type)type_k;
     if (type_v > 0) p.type_v = (enum ggml_type)type_v;
+    return p;
+}
+
+struct llama_context* ion7_context_create(
+    struct llama_model* model,
+    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max,
+    int32_t n_threads, int32_t n_threads_batch,
+    int flash_attn, int offload_kqv, int op_offload,
+    int no_perf, int type_k, int type_v, int swa_full, int kv_unified)
+{
+    struct llama_context_params p = build_ctx_params(
+        n_ctx, n_batch, n_ubatch, n_seq_max,
+        n_threads, n_threads_batch,
+        flash_attn, offload_kqv, op_offload,
+        no_perf, type_k, type_v, swa_full, kv_unified);
     return llama_init_from_model(model, p);
 }
 
-struct llama_context* ion7_context_create_with_cb(struct llama_model* model, uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max, int32_t n_threads, int32_t n_threads_batch, int flash_attn, int offload_kqv, int op_offload, int no_perf, int type_k, int type_v, int swa_full, int kv_unified, void* cb_eval, void* cb_eval_user_data)
+struct llama_context* ion7_context_create_with_cb(
+    struct llama_model* model,
+    uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch, uint32_t n_seq_max,
+    int32_t n_threads, int32_t n_threads_batch,
+    int flash_attn, int offload_kqv, int op_offload,
+    int no_perf, int type_k, int type_v, int swa_full, int kv_unified,
+    void* cb_eval, void* cb_eval_user_data)
 {
-    struct llama_context_params p = llama_context_default_params();
-    p.n_ctx           = n_ctx    ? n_ctx    : 4096;
-    p.n_batch         = n_batch  ? n_batch  : 2048;
-    p.n_ubatch        = n_ubatch ? n_ubatch : p.n_batch;
-    p.n_seq_max       = n_seq_max ? n_seq_max : 1;
-    p.n_threads       = n_threads > 0       ? n_threads       : 4;
-    p.n_threads_batch = n_threads_batch > 0 ? n_threads_batch : p.n_threads * 2;
-    p.flash_attn_type = (type_k != 1 || flash_attn) ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_AUTO;
-    p.offload_kqv  = (bool)offload_kqv;
-    p.op_offload   = (bool)op_offload;
-    p.no_perf      = (bool)no_perf;
-    p.swa_full     = (bool)swa_full;
-    p.kv_unified   = (bool)kv_unified;
-    if (type_k > 0) p.type_k = (enum ggml_type)type_k;
-    if (type_v > 0) p.type_v = (enum ggml_type)type_v;
+    struct llama_context_params p = build_ctx_params(
+        n_ctx, n_batch, n_ubatch, n_seq_max,
+        n_threads, n_threads_batch,
+        flash_attn, offload_kqv, op_offload,
+        no_perf, type_k, type_v, swa_full, kv_unified);
     p.cb_eval           = (ggml_backend_sched_eval_callback)cb_eval;
     p.cb_eval_user_data = cb_eval_user_data;
     return llama_init_from_model(model, p);
@@ -413,8 +431,8 @@ void ion7_threadpool_detach(struct llama_context* ctx)
 
 int ion7_threadpool_n_threads(ion7_threadpool_t* tp)
 {
-    (void)tp;
-    return 0;
+    if (!tp) return 0;
+    return ggml_threadpool_get_n_threads((ggml_threadpool_t)tp);
 }
 
 void ion7_threadpool_pause(ion7_threadpool_t* tp)
@@ -470,27 +488,27 @@ typedef struct {
     void*                  userdata;
 } ion7_custom_sampler_ctx_t;
 
-static const char* _ion7_smpl_name(const struct llama_sampler* smpl) {
+static const char* ion7_smpl_name(const struct llama_sampler* smpl) {
     return ((ion7_custom_sampler_ctx_t*)smpl->ctx)->name;
 }
-static void _ion7_smpl_accept(struct llama_sampler* smpl, llama_token tok) {
+static void ion7_smpl_accept(struct llama_sampler* smpl, llama_token tok) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->accept_fn) c->accept_fn(tok, c->userdata);
 }
-static void _ion7_smpl_apply(struct llama_sampler* smpl, llama_token_data_array* cur_p) {
+static void ion7_smpl_apply(struct llama_sampler* smpl, llama_token_data_array* cur_p) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->apply_fn) c->apply_fn(cur_p, c->userdata);
 }
-static void _ion7_smpl_reset(struct llama_sampler* smpl) {
+static void ion7_smpl_reset(struct llama_sampler* smpl) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->reset_fn) c->reset_fn(c->userdata);
 }
-static void _ion7_smpl_free(struct llama_sampler* smpl) {
+static void ion7_smpl_free(struct llama_sampler* smpl) {
     ion7_custom_sampler_ctx_t* c = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     if (c->free_fn) c->free_fn(c->userdata);
     free(c);
 }
-static struct llama_sampler* _ion7_smpl_clone(const struct llama_sampler* smpl) {
+static struct llama_sampler* ion7_smpl_clone(const struct llama_sampler* smpl) {
     ion7_custom_sampler_ctx_t* src = (ion7_custom_sampler_ctx_t*)smpl->ctx;
     return ion7_sampler_create(
         src->name, src->apply_fn, src->accept_fn,
@@ -500,17 +518,17 @@ static struct llama_sampler* _ion7_smpl_clone(const struct llama_sampler* smpl) 
 /* Field order matches struct llama_sampler_i exactly:
  * name, accept, apply, reset, clone, free, backend_init,
  * backend_accept, backend_apply, backend_set_input          */
-static struct llama_sampler_i _ion7_custom_iface = {
-    _ion7_smpl_name,    /* name   */
-    _ion7_smpl_accept,  /* accept */
-    _ion7_smpl_apply,   /* apply  */
-    _ion7_smpl_reset,   /* reset  */
-    _ion7_smpl_clone,   /* clone  */
-    _ion7_smpl_free,    /* free   */
-    nullptr,            /* backend_init      */
-    nullptr,            /* backend_accept    */
-    nullptr,            /* backend_apply     */
-    nullptr,            /* backend_set_input */
+static struct llama_sampler_i ion7_custom_iface = {
+    ion7_smpl_name,    /* name   */
+    ion7_smpl_accept,  /* accept */
+    ion7_smpl_apply,   /* apply  */
+    ion7_smpl_reset,   /* reset  */
+    ion7_smpl_clone,   /* clone  */
+    ion7_smpl_free,    /* free   */
+    nullptr,           /* backend_init      */
+    nullptr,           /* backend_accept    */
+    nullptr,           /* backend_apply     */
+    nullptr,           /* backend_set_input */
 };
 
 struct llama_sampler* ion7_sampler_create(
@@ -530,7 +548,7 @@ struct llama_sampler* ion7_sampler_create(
     ctx->reset_fn  = reset_fn;
     ctx->free_fn   = free_fn;
     ctx->userdata  = userdata;
-    return llama_sampler_init(&_ion7_custom_iface, (llama_sampler_context_t)ctx);
+    return llama_sampler_init(&ion7_custom_iface, (llama_sampler_context_t)ctx);
 }
 
 /* =========================================================================

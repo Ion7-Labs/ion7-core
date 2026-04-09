@@ -31,8 +31,9 @@ enum llama_rope_type {
     LLAMA_ROPE_TYPE_NONE   = -1,
     LLAMA_ROPE_TYPE_NORM   =  0,
     LLAMA_ROPE_TYPE_NEOX   =  2,
-    LLAMA_ROPE_TYPE_MROPE  = 10,
-    LLAMA_ROPE_TYPE_IMROPE = 24,
+    LLAMA_ROPE_TYPE_MROPE  =  8,
+    LLAMA_ROPE_TYPE_VISION = 24,
+    LLAMA_ROPE_TYPE_IMROPE = 40,
 };
 
 enum llama_token_attr {
@@ -407,7 +408,7 @@ void     llama_set_causal_attn(llama_context* ctx, bool causal_attn);
 void     llama_set_warmup    (llama_context* ctx, bool warmup);
 void     llama_set_abort_callback(llama_context* ctx, ggml_abort_callback cb, void* data);
 void     llama_synchronize   (llama_context* ctx);
-enum llama_pooling_type llama_get_pooling_type(const llama_context* ctx);
+enum llama_pooling_type llama_pooling_type      (const llama_context* ctx);
 
 /* Context queries */
 const llama_model* llama_get_model  (const llama_context* ctx);
@@ -619,15 +620,18 @@ return {
         ROPE_NONE       = -1,
         ROPE_NORM       = 0,
         ROPE_NEOX       = 2,
-        ROPE_MROPE      = 10,
-        ROPE_IMROPE     = 24,
-        -- Speculative decoding types :
-        SPEC_NONE         = 0,
-        SPEC_DRAFT        = 1,
-        SPEC_EAGLE3       = 2,
-        SPEC_NGRAM_SIMPLE = 3,
-        SPEC_NGRAM_MAP_K  = 4,
-        SPEC_NGRAM_CACHE  = 7,
+        ROPE_MROPE      =  8,
+        ROPE_VISION     = 24,
+        ROPE_IMROPE     = 40,
+        -- Speculative decoding - 1:1 with ION7_SPEC_* / common_speculative_type in ion7_bridge.h:
+        SPEC_NONE          = 0,  -- no speculative decoding
+        SPEC_DRAFT         = 1,  -- separate lighter draft model (ctx_dft required)
+        SPEC_EAGLE3        = 2,  -- EAGLE-3 draft heads on target model
+        SPEC_NGRAM_SIMPLE  = 3,  -- simple n-gram from recent context
+        SPEC_NGRAM_MAP_K   = 4,  -- n-gram map with prediction statistics
+        SPEC_NGRAM_MAP_K4V = 5,  -- n-gram map with k + 4 m-gram values
+        SPEC_NGRAM_MOD     = 6,  -- n-gram with modular prediction
+        SPEC_NGRAM_CACHE   = 7,  -- LRU n-gram cache (≈ Cacheback paper)
         -- Regex match results (ion7_regex_search)
         REGEX_NO_MATCH    = 0,
         REGEX_PARTIAL     = 1,
