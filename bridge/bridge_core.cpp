@@ -2,6 +2,13 @@
 /*
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
+ *
+ * This file is part of ion7-core.
+ *
+ * ──────────────────────────────────────────────────────────────────────────
+ * Migrated from C to C++ (ion7-core v1.1) to enable libcommon integration.
+ * The public API is unchanged — all symbols remain extern "C".
+ * ──────────────────────────────────────────────────────────────────────────
  */
 
 #include "ion7_bridge.h"

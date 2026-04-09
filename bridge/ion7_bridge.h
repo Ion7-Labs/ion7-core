@@ -489,8 +489,8 @@ struct llama_sampler* ion7_sampler_create(
 void ion7_print_struct_sizes(void);
 
 /* =========================================================================
- * ── C++ EXTENSIONS (libcommon) ─────────────────────────────
- * Requires libcommon.
+ * ── C++ EXTENSIONS (libcommon — bridge v1.1) ─────────────────────────────
+ * Requires libcommon. Available when ION7_BRIDGE_VERSION >= "1.1.0".
  * ======================================================================= */
 
 /* ── Chat Templates (Jinja2 native) ────────────────────────────────────── */

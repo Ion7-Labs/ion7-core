@@ -22,7 +22,7 @@
 #   make LIB_DIR=/path/to/llama.cpp/build/bin
 #   make LIB_DIR=... COMMON_LIB_DIR=/path/to/llama.cpp/build/common
 #
-# Bridge - C++ build with libcommon integration.
+# Bridge v1.1 — C++ build with libcommon integration.
 # Requires: libllama.so (LIB_DIR) + libcommon.a (COMMON_LIB_DIR)
 #
 # Source layout (split from monolithic ion7_bridge.cpp):
