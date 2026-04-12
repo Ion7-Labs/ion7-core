@@ -42,12 +42,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y cmake build-essential luajit
 
-      - name: Cache llama.cpp build
+      - name: Cache llama.cpp source + build
         id: cache-llama
         uses: actions/cache@v4
         with:
-          path: /tmp/llama-build
-          key: llama-master-${{ github.run_id }}-linux-x64-cpu
+          path: |
+            /tmp/llama-src
+            /tmp/llama-build
+          key: llama-${{ env.LLAMA_CPP_REF }}-linux-x64-cpu
 
       - name: Build llama.cpp (CPU-only)
         if: steps.cache-llama.outputs.cache-hit != 'true'
@@ -63,7 +65,7 @@ jobs:
           cmake --build /tmp/llama-build --config Release -j$(nproc)
 
       - name: Build ion7-core bridge
-        run: make build LIB_DIR=/tmp/llama-build/bin LLAMA_SRC=/tmp/llama-src
+        run: make build LIB_DIR=/tmp/llama-build/bin COMMON_LIB_DIR=/tmp/llama-build/common LLAMA_SRC=/tmp/llama-src
 
       - name: Verify bridge
         run: |
@@ -94,12 +96,14 @@ jobs:
       - name: Install dependencies
         run: brew install cmake luajit
 
-      - name: Cache llama.cpp build
+      - name: Cache llama.cpp source + build
         id: cache-llama
         uses: actions/cache@v4
         with:
-          path: /tmp/llama-build
-          key: llama-master-${{ github.run_id }}-macos-arm64-cpu
+          path: |
+            /tmp/llama-src
+            /tmp/llama-build
+          key: llama-${{ env.LLAMA_CPP_REF }}-macos-arm64-cpu
 
       - name: Build llama.cpp (CPU + Metal)
         if: steps.cache-llama.outputs.cache-hit != 'true'
@@ -115,7 +119,7 @@ jobs:
           cmake --build /tmp/llama-build --config Release -j$(sysctl -n hw.logicalcpu)
 
       - name: Build ion7-core bridge
-        run: make build LIB_DIR=/tmp/llama-build/bin LLAMA_SRC=/tmp/llama-src
+        run: make build LIB_DIR=/tmp/llama-build/bin COMMON_LIB_DIR=/tmp/llama-build/common LLAMA_SRC=/tmp/llama-src
 
       - name: Verify bridge
         run: |
@@ -151,12 +155,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y cmake build-essential luajit
 
-      - name: Cache llama.cpp build
+      - name: Cache llama.cpp source + build
         id: cache-llama
         uses: actions/cache@v4
         with:
-          path: /tmp/llama-build
-          key: llama-master-${{ github.run_id }}-linux-arm64-cpu
+          path: |
+            /tmp/llama-src
+            /tmp/llama-build
+          key: llama-${{ env.LLAMA_CPP_REF }}-linux-arm64-cpu
 
       - name: Build llama.cpp (CPU-only)
         if: steps.cache-llama.outputs.cache-hit != 'true'
@@ -172,7 +178,7 @@ jobs:
           cmake --build /tmp/llama-build --config Release -j$(nproc)
 
       - name: Build ion7-core bridge
-        run: make build LIB_DIR=/tmp/llama-build/bin LLAMA_SRC=/tmp/llama-src
+        run: make build LIB_DIR=/tmp/llama-build/bin COMMON_LIB_DIR=/tmp/llama-build/common LLAMA_SRC=/tmp/llama-src
 
       - name: Upload bridge artifact
         uses: actions/upload-artifact@v4

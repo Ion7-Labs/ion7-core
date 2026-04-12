@@ -87,7 +87,8 @@ llama:
 build: $(_BUILD_PREREQS)
 	$(MAKE) -C bridge \
 		LIB_DIR=$(LIB_DIR) \
-		COMMON_LIB_DIR=$(COMMON_LIB_DIR)
+		COMMON_LIB_DIR=$(COMMON_LIB_DIR) \
+		$(if $(LLAMA_SRC),LLAMA_SRC=$(LLAMA_SRC),)
 
 test: build
 	@echo ""
