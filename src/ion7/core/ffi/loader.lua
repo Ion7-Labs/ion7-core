@@ -208,6 +208,9 @@ typedef struct {
     int32_t  mirostat;
     float    mirostat_tau;
     float    mirostat_eta;
+    float    top_n_sigma;
+    float    adaptive_target;
+    float    adaptive_decay;
     int32_t  grammar_lazy;
 } ion7_csampler_params_t;
 

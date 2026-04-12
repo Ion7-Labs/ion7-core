@@ -657,6 +657,9 @@ typedef struct {
     int32_t  mirostat;          /**< 0 = off, 1 = Mirostat v1, 2 = Mirostat v2.      */
     float    mirostat_tau;      /**< Mirostat target entropy (default 5.0).           */
     float    mirostat_eta;      /**< Mirostat learning rate (default 0.1).            */
+    float    top_n_sigma;       /**< Top-N-Sigma cutoff. -1.0 = disabled.             */
+    float    adaptive_target;   /**< Adaptive-P target probability. -1.0 = disabled. */
+    float    adaptive_decay;    /**< Adaptive-P EMA decay (default 0.9).             */
     int32_t  grammar_lazy;      /**< 0 = apply grammar always, 1 = lazy (CRANE).     */
 } ion7_csampler_params_t;
 

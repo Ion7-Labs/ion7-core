@@ -170,6 +170,9 @@ ion7_csampler_t* ion7_csampler_init(
         sp.mirostat        = p->mirostat;
         sp.mirostat_tau    = p->mirostat_tau;
         sp.mirostat_eta    = p->mirostat_eta;
+        sp.top_n_sigma     = p->top_n_sigma;
+        sp.adaptive_target = p->adaptive_target;
+        sp.adaptive_decay  = p->adaptive_decay;
         sp.grammar_lazy    = (bool)p->grammar_lazy;
     }
 

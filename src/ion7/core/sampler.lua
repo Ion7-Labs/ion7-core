@@ -685,6 +685,9 @@ CSampler.__index = CSampler
 ---   opts.mirostat          number?   0 = off, 1 = v1, 2 = v2 (default: 0)
 ---   opts.mirostat_tau      number?   Mirostat target entropy (default: 5.0)
 ---   opts.mirostat_eta      number?   Mirostat learning rate (default: 0.1)
+---   opts.top_n_sigma       number?   Top-N-Sigma cutoff (default: -1.0 = off)
+---   opts.adaptive_target   number?   Adaptive-P target probability (default: -1.0 = off)
+---   opts.adaptive_decay    number?   Adaptive-P EMA decay (default: 0.9)
 ---   opts.grammar           string?   GBNF grammar string (optional)
 ---   opts.grammar_lazy      bool?     Activate grammar only on trigger (default: false)
 ---   opts.trigger_words     table?    Strings that activate lazy grammar
@@ -718,6 +721,9 @@ function CSampler.new(model, opts)
         mirostat        = opts.mirostat        or 0,
         mirostat_tau    = opts.mirostat_tau    or 5.0,
         mirostat_eta    = opts.mirostat_eta    or 0.1,
+        top_n_sigma     = opts.top_n_sigma     or -1.0,
+        adaptive_target = opts.adaptive_target or -1.0,
+        adaptive_decay  = opts.adaptive_decay  or 0.9,
         grammar_lazy    = (opts.grammar_lazy and 1 or 0),
     })
 

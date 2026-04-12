@@ -61,25 +61,43 @@ enum llama_pooling_type {
 
 /* llama_ftype : quantization formats */
 enum llama_ftype {
-    LLAMA_FTYPE_ALL_F32        = 0,
-    LLAMA_FTYPE_MOSTLY_F16     = 1,
-    LLAMA_FTYPE_MOSTLY_Q4_0    = 2,
-    LLAMA_FTYPE_MOSTLY_Q4_1    = 3,
-    LLAMA_FTYPE_MOSTLY_Q8_0    = 7,
-    LLAMA_FTYPE_MOSTLY_Q5_0    = 8,
-    LLAMA_FTYPE_MOSTLY_Q5_1    = 9,
-    LLAMA_FTYPE_MOSTLY_Q2_K    = 10,
-    LLAMA_FTYPE_MOSTLY_Q3_K_S  = 11,
-    LLAMA_FTYPE_MOSTLY_Q3_K_M  = 12,
-    LLAMA_FTYPE_MOSTLY_Q3_K_L  = 13,
-    LLAMA_FTYPE_MOSTLY_Q4_K_S  = 14,
-    LLAMA_FTYPE_MOSTLY_Q4_K_M  = 15,
-    LLAMA_FTYPE_MOSTLY_Q5_K_S  = 16,
-    LLAMA_FTYPE_MOSTLY_Q5_K_M  = 17,
-    LLAMA_FTYPE_MOSTLY_Q6_K    = 18,
-    LLAMA_FTYPE_MOSTLY_IQ4_XS  = 30,
-    LLAMA_FTYPE_MOSTLY_BF16    = 32,
-    LLAMA_FTYPE_GUESSED        = 1024,
+    LLAMA_FTYPE_ALL_F32             =  0,
+    LLAMA_FTYPE_MOSTLY_F16          =  1,
+    LLAMA_FTYPE_MOSTLY_Q4_0         =  2,
+    LLAMA_FTYPE_MOSTLY_Q4_1         =  3,
+    LLAMA_FTYPE_MOSTLY_Q8_0         =  7,
+    LLAMA_FTYPE_MOSTLY_Q5_0         =  8,
+    LLAMA_FTYPE_MOSTLY_Q5_1         =  9,
+    LLAMA_FTYPE_MOSTLY_Q2_K         = 10,
+    LLAMA_FTYPE_MOSTLY_Q3_K_S       = 11,
+    LLAMA_FTYPE_MOSTLY_Q3_K_M       = 12,
+    LLAMA_FTYPE_MOSTLY_Q3_K_L       = 13,
+    LLAMA_FTYPE_MOSTLY_Q4_K_S       = 14,
+    LLAMA_FTYPE_MOSTLY_Q4_K_M       = 15,
+    LLAMA_FTYPE_MOSTLY_Q5_K_S       = 16,
+    LLAMA_FTYPE_MOSTLY_Q5_K_M       = 17,
+    LLAMA_FTYPE_MOSTLY_Q6_K         = 18,
+    LLAMA_FTYPE_MOSTLY_IQ2_XXS      = 19,
+    LLAMA_FTYPE_MOSTLY_IQ2_XS       = 20,
+    LLAMA_FTYPE_MOSTLY_Q2_K_S       = 21,
+    LLAMA_FTYPE_MOSTLY_IQ3_XS       = 22,
+    LLAMA_FTYPE_MOSTLY_IQ3_XXS      = 23,
+    LLAMA_FTYPE_MOSTLY_IQ1_S        = 24,
+    LLAMA_FTYPE_MOSTLY_IQ4_NL       = 25,
+    LLAMA_FTYPE_MOSTLY_IQ3_S        = 26,
+    LLAMA_FTYPE_MOSTLY_IQ3_M        = 27,
+    LLAMA_FTYPE_MOSTLY_IQ2_S        = 28,
+    LLAMA_FTYPE_MOSTLY_IQ2_M        = 29,
+    LLAMA_FTYPE_MOSTLY_IQ4_XS       = 30,
+    LLAMA_FTYPE_MOSTLY_IQ1_M        = 31,
+    LLAMA_FTYPE_MOSTLY_BF16         = 32,
+    /* 33-35 removed from GGUF (Q4_0 runtime repack variants) */
+    LLAMA_FTYPE_MOSTLY_TQ1_0        = 36,
+    LLAMA_FTYPE_MOSTLY_TQ2_0        = 37,
+    LLAMA_FTYPE_MOSTLY_MXFP4_MOE    = 38,
+    LLAMA_FTYPE_MOSTLY_NVFP4        = 39,
+    LLAMA_FTYPE_MOSTLY_Q1_0         = 40,
+    LLAMA_FTYPE_GUESSED             = 1024,
 };
 
 enum llama_rope_scaling_type {
@@ -103,9 +121,10 @@ enum llama_flash_attn_type {
 };
 
 enum llama_split_mode {
-    LLAMA_SPLIT_MODE_NONE  = 0,
-    LLAMA_SPLIT_MODE_LAYER = 1,
-    LLAMA_SPLIT_MODE_ROW   = 2,
+    LLAMA_SPLIT_MODE_NONE   = 0,
+    LLAMA_SPLIT_MODE_LAYER  = 1,
+    LLAMA_SPLIT_MODE_ROW    = 2,
+    LLAMA_SPLIT_MODE_TENSOR = 3,
 };
 
 enum llama_params_fit_status {
