@@ -35,7 +35,9 @@
 #   bridge_utils.cpp    - standalone utilities (utf8, json, regex, cvec, numa, ...)
 
 CXX        ?= g++
-LIB_DIR    ?= /usr/local/lib
+# Default to the vendored llama.cpp build (relative from bridge/).
+# Overridden by the top-level Makefile with an absolute path.
+LIB_DIR    ?= $(abspath ../vendor/llama.cpp/build/bin)
 BRIDGE_SO  := ion7_bridge.so
 BRIDGE_SRCS := bridge_core.cpp bridge_common.cpp bridge_training.cpp bridge_utils.cpp
 
