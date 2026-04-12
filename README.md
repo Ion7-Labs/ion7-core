@@ -9,7 +9,7 @@
 
 **LuaJIT bindings for llama.cpp — zero-overhead local LLM inference, natively in Lua.**
 
-ion7-core is the missing bridge between LuaJIT and llama.cpp. Load a GGUF model, decode tokens, sample, manage KV cache, write custom samplers in pure Lua — all at native speed, with no Python, no HTTP, no overhead.
+ion7-core bridges LuaJIT and llama.cpp via a thin C++ shim (`ion7_bridge.so`) that absorbs llama.cpp API churn. Load a GGUF model, decode tokens, manage KV cache, write custom samplers in pure Lua — at native speed, no Python, no HTTP.
 
 ```lua
 local ion7    = require "ion7.core"
@@ -36,301 +36,34 @@ print(table.concat(out))
 ion7.shutdown()
 ```
 
----
-
-## Why ion7-core?
-
-llama.cpp has bindings for Python, Go, Rust, Java, Swift — but nothing serious for Lua. If you're building LLM features inside a Lua runtime (game engines, OpenResty, Lapis, Eluna, Love2D, embedded scripting hosts), your options until now were:
-
-- Call the llama-server HTTP API and eat the latency
-- Shell out to a Python subprocess
-- Write your own FFI bindings from scratch
-
-ion7-core is the third option, done properly.
-
-### The bridge architecture
-
-Calling llama.cpp directly from LuaJIT FFI is fragile — llama.cpp breaks its internal API frequently. ion7-core solves this with a thin C++ shim (`ion7_bridge.so`) that sits between LuaJIT and `libllama.so`:
-
-```
-Your Lua code
-     │
-     ▼
-ion7.core  (LuaJIT FFI)
-     │
-     ├──► ion7_bridge.so   ← stable API, absorbs llama.cpp churn
-     │         │
-     │         ├──► libllama.so      ← llama.cpp native library
-     │         └──► libcommon.a      ← libcommon (chat templates, samplers, speculative)
-     │
-     └──► libllama.so      ← direct FFI for stable structs (batch, logits...)
-```
-
-When llama.cpp changes its structs or param signatures, only the bridge needs recompiling. Your Lua code stays untouched.
-
----
-
-## Features
-
-**Model management**
-- Load GGUF models from disk, file descriptor, or multi-shard paths
-- Full metadata introspection (architecture, dimensions, GGUF key-value pairs)
-- Auto-fit VRAM: probe available GPU memory and compute optimal `n_gpu_layers` + `n_ctx`
-- In-place quantization (Q2K → Q8_0, BF16, IQ series, TQ, NVFP4...)
-
-**Inference**
-- Chunked batch decode with automatic KV accumulation
-- Single-token decode loop with pre-allocated batch (zero malloc per token)
-- Encoder-decoder support (T5, BART, Whisper)
-- Per-position logits and embeddings access
-
-**KV cache**
-- Full cache lifecycle: clear, remove, copy, keep, shift, compress (`kv_seq_div`)
-- Per-sequence operations for parallel decoding
-- State snapshot/restore (in-memory or file-backed)
-- Per-sequence state persistence
-
-**Sampler chains**
-- Fluent builder API: `Sampler.chain():top_k(40):temp(0.8):dist():build()`
-- All llama.cpp samplers: greedy, dist, top-k, top-p, min-p, typical, XTC, mirostat v1/v2, DRY, penalties, grammar (GBNF), logit bias, adaptive-p, top-n-sigma
-- **Custom Lua samplers**: write sampling logic in pure Lua, inject it into the chain via `ffi.cast` callbacks
-- **Advanced sampler (`common_sampler`)**: DRY, XTC, lazy grammar (CRANE-style), trigger words, mirostat, adaptive-p, top-n-sigma — all in one C object
-
-**Speculative decoding**
-- Four strategies: simple n-grams, n-gram map, LRU n-gram cache (≈ Cacheback), external draft model
-- Automatic token acceptance and stats reporting
-- Zero extra VRAM for n-gram modes
-
-**Chat & output parsing**
-- Native Jinja2 chat templates via `common_chat_templates` — `enable_thinking`, tool schemas, `tool_choice`, parallel calls
-- `ion7_chat_parse`: parse raw model output into structured `content` / `thinking` / `tool_calls`
-- Reasoning budget: hard token limit on `<think>` blocks via sampler integration
-- JSON Schema → GBNF grammar compiler (C++ backend, handles `$ref`, `allOf`, `anyOf`)
-
-**System**
-- Shared CPU threadpool across contexts
-- LoRA adapter loading and hot-swapping
-- Activation steering (control vectors) with `cvec_apply`
-- Full performance counters
-- Embedding contexts with pooling (mean, cls, last, rank)
-- NUMA topology control
-- CPU SIMD capability introspection (AVX, AVX512, AMX, NEON, SVE, RVV...)
-- Log routing to file, timestamp injection, log level filtering
-- Context warmup (JIT GPU kernel pre-compilation)
-
-**Utilities**
-- Streaming-safe UTF-8 helpers
-- Partial regex matching (streaming-safe)
-- Base64 encode/decode
-- JSON validate / pretty-print / RFC 7396 merge-patch
-- Pure Lua JSON library (`ion7.vendor.json`) — encoder + decoder, zero deps
+**[Full API documentation →](https://ion7-labs.github.io)**
 
 ---
 
 ## Quick start
 
-### Prerequisites
-
-- LuaJIT 2.1
-- A compiled llama.cpp (see [INSTALL.md](INSTALL.md))
-- GCC or Clang with C++17 support
-
-### Build the bridge
-
-**With an external llama.cpp build (recommended for development):**
+**Prerequisites:** LuaJIT 2.1, GCC/Clang with C++17, a compiled llama.cpp.
 
 ```bash
 git clone https://github.com/ion7-labs/ion7-core
 cd ion7-core
 
-# Option 1: pass paths directly
-make build LIB_DIR=/path/to/llama.cpp/build/bin
+# External llama.cpp build
+make build LIB_DIR=/path/to/llama.cpp/build/bin COMMON_LIB_DIR=/path/to/llama.cpp/build/common
 
-# Option 2: persist via local.mk (gitignored)
+# Or persist paths via local.mk (gitignored)
 cp local.mk.example local.mk
-# edit local.mk → set LIB_DIR and COMMON_LIB_DIR
+# edit LIB_DIR and COMMON_LIB_DIR, then:
 make build
-```
 
-**With the bundled llama.cpp (auto-build, CUDA):**
-
-```bash
+# Bundled llama.cpp with CUDA (auto-build)
 make build CUDA_ARCH=86   # 86=RTX30xx  89=RTX40xx  80=A100
 ```
 
-This compiles `bridge/ion7_bridge.so` against your llama.cpp install.
-
-### Run the tests
-
 ```bash
+# Run tests
 make test ION7_MODEL=/path/to/your-model.gguf
 ```
-
-### Generate API docs
-
-```bash
-make docs   # requires: luarocks install ldoc
-# → docs/api/
-```
-
----
-
-## Usage
-
-### Loading a model
-
-```lua
-local ion7 = require "ion7.core"
-ion7.init({ log_level = 1 })  -- 0=silent, 1=error, 2=warn, 3=info, 4=debug
-
--- Basic load
-local model = ion7.Model.load("model.gguf", {
-    n_gpu_layers = 35,    -- layers to offload to GPU (0 = CPU only, -1 = all)
-    use_mmap     = true,  -- default: true
-})
-
--- Auto-fit VRAM
-local fit = ion7.Model.fit_params("model.gguf", { n_ctx = 32768 })
-if fit then
-    local model = ion7.Model.load("model.gguf", { n_gpu_layers = fit.n_gpu_layers })
-    local ctx   = model:context({ n_ctx = fit.n_ctx })
-end
-```
-
-### Creating a context
-
-```lua
-local ctx = model:context({
-    n_ctx        = 8192,    -- context window
-    kv_type      = "q8_0", -- KV cache quantization: "f16", "q8_0", "q4_0", ...
-    flash_attn   = true,
-    offload_kqv  = true,
-    n_threads    = 8,
-})
-```
-
-### Tokenization and chat templates
-
-```lua
-local vocab = model:vocab()
-
-local prompt = vocab:apply_template({
-    { role = "system",    content = "You are a helpful assistant." },
-    { role = "user",      content = "What is LuaJIT?" },
-}, true)  -- true = append assistant prefix
-
-local tokens, n = vocab:tokenize(prompt, true, true)
-```
-
-### Generation loop
-
-```lua
-local sampler = ion7.Sampler.chain()
-    :penalties(64, 1.1, 0.0, 0.0)
-    :top_k(40)
-    :top_p(0.95)
-    :temp(0.8)
-    :dist()
-    :build()
-
-ctx:decode(tokens, n, 0, 0)
-
-local out = {}
-for _ = 1, 512 do
-    local token = sampler:sample(ctx:ptr(), -1)
-    if vocab:is_eog(token) then break end
-    out[#out + 1] = vocab:piece(token)
-    ctx:decode_single(token, 0)
-end
-
-print(table.concat(out))
-```
-
-### Custom Lua sampler
-
-```lua
-local cs = ion7.CustomSampler.new("my_sampler", {
-    apply = function(candidates, n)
-        local best_i, best = 0, -math.huge
-        for i = 0, n - 1 do
-            if candidates[i].logit > best then
-                best   = candidates[i].logit
-                best_i = i
-            end
-        end
-        return best_i
-    end,
-})
-
-local sampler = ion7.Sampler.chain():custom(cs):build()
-```
-
-### Embeddings
-
-```lua
-local embed_ctx = model:embedding_context({
-    n_ctx    = 512,
-    pooling  = "last",   -- "none", "mean", "cls", "last", "rank"
-    n_threads = 4,
-})
-
-local tokens, n = vocab:tokenize("Embed this text.", false, false)
-embed_ctx:decode(tokens, n, 0, 0)
-
-local vec = embed_ctx:embedding(0, model:n_embd())
--- vec is a Lua array of floats
-```
-
----
-
-## Module structure
-
-```
-ion7-core
-├── bridge/
-│   ├── bridge_core.cpp        - llama.h layer (model, context, KV, state, samplers)
-│   ├── bridge_common.cpp      - libcommon layer (chat templates, common_sampler, speculative, chat parse)
-│   ├── bridge_training.cpp    - llama_opt training pipeline
-│   ├── bridge_utils.cpp       - utilities (UTF-8, JSON, regex, cvec, NUMA, CPU caps, log, base64)
-│   ├── bridge_internal.hpp    - private shared header
-│   └── ion7_bridge.h          - stable public C API (extern "C"), 84 functions
-└── src/ion7/
-    ├── core/
-    │   ├── init.lua              - ion7.init(), ion7.shutdown(), ion7.capabilities()
-    │   ├── model.lua             - Model.load(), constructors, lifecycle
-    │   ├── model/
-    │   │   ├── inspect.lua       - n_*, has_*, is_*, rope_*, info()
-    │   │   ├── meta.lua          - GGUF metadata access (meta_count, meta_all, chat_template...)
-    │   │   ├── lora.lua          - LoRA load/apply/remove
-    │   │   ├── quantize.lua      - Model.quantize() + full ftype map
-    │   │   └── context_factory.lua - vocab(), context(), embedding_context() + KV_TYPES
-    │   ├── context.lua           - Context.new, lifecycle, immutable/mutable props
-    │   ├── context/
-    │   │   ├── decode.lua        - decode, decode_single, decode_multi, encode
-    │   │   ├── kv.lua            - KV cache and memory operations
-    │   │   ├── state.lua         - snapshot/restore, file-based persistence
-    │   │   └── logits.lua        - logits, embeddings, adapters, perf, threadpool
-    │   ├── vocab.lua             - tokenize, detokenize, chat templates, special tokens
-    │   ├── sampler.lua           - fluent SamplerBuilder chain + Sampler class
-    │   ├── sampler/
-    │   │   └── common.lua        - CSampler (common_sampler: DRY, XTC, grammar_lazy...)
-    │   ├── custom_sampler.lua    - Lua-native custom samplers via ffi.cast
-    │   ├── threadpool.lua        - shared CPU threadpool
-    │   ├── speculative.lua       - speculative decoding (ngram, draft model)
-    │   └── ffi/
-    │       ├── loader.lua        - library resolution and backend init
-    │       └── types.lua         - all llama.cpp cdef declarations + constants
-    └── vendor/
-        └── json.lua              - pure Lua JSON encoder/decoder, zero deps
-```
-
-The public API contract (stable across 1.x minor versions) is documented in [`spec/PUBLIC_API.md`](spec/PUBLIC_API.md).
-
----
-
-## Benchmarks
-
-Benchmarks live in the [ion7-benchmark](https://github.com/Ion7-Labs/ion7-benchmark) repository.
 
 ---
 
@@ -341,27 +74,13 @@ Benchmarks live in the [ion7-benchmark](https://github.com/Ion7-Labs/ion7-benchm
 | LuaJIT | 2.1+ |
 | llama.cpp | b8600+ (April 2026) |
 | OS | Linux, macOS |
-| GPU | CUDA (NVIDIA), ROCm (AMD), Metal (Apple Silicon), Vulkan |
+| GPU | CUDA, ROCm, Metal, Vulkan |
 | CPU | x86_64, ARM64 |
 
-> **llama.cpp compatibility note:** ion7-core tracks llama.cpp master. The bridge absorbs most API changes, but a recompile of `ion7_bridge.so` is required when llama.cpp makes breaking C API changes.
-
 ---
 
-## Licensing
+## License
 
-MIT License — free to use in any project, open source or commercial.
+MIT — free to use in any project, open source or commercial.
 
----
-
-## Contributing
-
-Issues and pull requests are welcome. Before opening a PR for a significant feature, open an issue first to discuss the design — ion7-core has a strict stability contract for the 1.x API surface.
-
-Please read [`spec/PUBLIC_API.md`](spec/PUBLIC_API.md) before contributing to understand what is and isn't in scope for ion7-core.
-
----
-
-## Acknowledgements
-
-ion7-core is built on top of [llama.cpp](https://github.com/ggml-org/llama.cpp) by Georgi Gerganov and contributors — the project that made local LLM inference possible for everyone.
+ion7-core is built on top of [llama.cpp](https://github.com/ggml-org/llama.cpp) by Georgi Gerganov and contributors.

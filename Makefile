@@ -4,7 +4,8 @@
 #   make build               Build with vendored llama.cpp (auto-configures + builds it)
 #   make build LIB_DIR=PATH  Build using an external llama.cpp installation
 #   make test  ION7_MODEL=/path/to/model.gguf
-#   make docs                Generate HTML docs via ion7-doc (requires ../ion7-doc)
+#   make docs                Generate HTML docs for ion7-core → ../ion7-doc/docs/core/
+#   make pages               Deploy all docs to GitHub Pages  → use ion7-doc instead
 
 # ── Local overrides ───────────────────────────────────────────────────────────
 # Copy local.mk.example → local.mk and set LIB_DIR / COMMON_LIB_DIR to your
@@ -56,9 +57,9 @@ help:
 	@echo "  make build               Build ion7_bridge.so (auto-builds llama.cpp)"
 	@echo "  make build LIB_DIR=PATH  Build using an external llama.cpp"
 	@echo "  make test  ION7_MODEL=/path/to/model.gguf"
-	@echo "  make docs                Generate HTML docs → $(DOCS_OUT)/"
-	@echo "  make docs DOCS_OUT=PATH  Generate docs to a custom directory"
-	@echo "  make pages PAGES_DIR=PATH  Generate docs directly to github.io repo"
+	@echo "  make docs                Generate HTML docs → $(DOCS_OUT)/core/"
+	@echo ""
+	@echo "  To deploy docs (all modules): cd ../ion7-doc && make pages"
 	@echo ""
 	@echo "Vendor build config:"
 	@echo "  CUDA_ARCH=$(CUDA_ARCH)  86=RTX30xx  89=RTX40xx  80=A100"
@@ -100,16 +101,10 @@ test: build
 docs:
 	@test -f $(ION7_DOC)/bin/gendoc.lua || \
 	  (echo "[ion7-core] ion7-doc not found at $(ION7_DOC)" && exit 1)
-	@mkdir -p $(DOCS_OUT)
-	@luajit $(ION7_DOC)/bin/gendoc.lua \
-	  $(abspath src/ion7/core) \
-	  $(DOCS_OUT) \
-	  $(abspath README.md)
+	@luajit $(ION7_DOC)/bin/gendoc.lua core $(DOCS_OUT)
 
 pages:
-	@test -d "$(PAGES_DIR)" || \
-	  (echo "[ion7-core] PAGES_DIR not set or not found: $(PAGES_DIR)" && exit 1)
-	@$(MAKE) docs DOCS_OUT=$(PAGES_DIR)
+	@echo "[ion7-core] hint: use 'cd ../ion7-doc && make pages' to deploy all docs"
 
 all: build test
 
