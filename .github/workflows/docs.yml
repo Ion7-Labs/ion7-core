@@ -1,4 +1,4 @@
-name: Publish docs
+name: Notify ion7-doc
 
 on:
   push:
@@ -10,45 +10,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
+  notify:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout ion7-core
-        uses: actions/checkout@v4
-        with:
-          path: ion7-core
-
-      - name: Checkout ion7-doc
-        uses: actions/checkout@v4
-        with:
-          repository: ion7-labs/ion7-doc
-          path: ion7-doc
-          # token: ${{ secrets.PAGES_TOKEN }}   # uncomment if ion7-doc is private
-
-      - name: Checkout ion7-labs.github.io
-        uses: actions/checkout@v4
-        with:
-          repository: ion7-labs/ion7-labs.github.io
-          token: ${{ secrets.PAGES_TOKEN }}
-          path: pages
-
-      - name: Install LuaJIT
-        run: sudo apt-get install -y luajit
-
-      - name: Build docs
+      - name: Trigger ion7-doc deploy
         run: |
-          luajit ion7-doc/bin/gendoc.lua \
-            ${{ github.workspace }}/ion7-core/src/ion7/core \
-            ${{ github.workspace }}/pages \
-            ${{ github.workspace }}/ion7-core/README.md
-
-      - name: Commit and push
-        working-directory: pages
-        run: |
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git add -A
-          git diff --cached --quiet && echo "Nothing to deploy." && exit 0
-          git commit -m "docs: $(date -u +'%Y-%m-%d') — ion7-core@$(echo ${{ github.sha }} | cut -c1-7)"
-          git push
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.PAGES_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/ion7-labs/ion7-doc/dispatches \
+            -d '{"event_type":"docs","client_payload":{"source":"ion7-core"}}'
