@@ -3,11 +3,29 @@
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
  *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
  * This file is part of ion7-core.
  *
  * ──────────────────────────────────────────────────────────────────────────
  * Migrated from C to C++ (ion7-core v1.1) to enable libcommon integration.
- * The public API is unchanged — all symbols remain extern "C".
+ * The public API is unchanged - all symbols remain extern "C".
  * ──────────────────────────────────────────────────────────────────────────
  */
 
@@ -195,6 +213,11 @@ int ion7_params_fit(const char* path, int32_t* n_gpu_layers, uint32_t* n_ctx, ui
     float* ts      = (float*)calloc(max_dev, sizeof(float));
     struct llama_model_tensor_buft_override* ov = (struct llama_model_tensor_buft_override*)calloc(max_ovr, sizeof(struct llama_model_tensor_buft_override));
     size_t* margins = (size_t*)calloc(max_dev, sizeof(size_t));
+
+    if (!ts || !ov || !margins) {
+        free(ts); free(ov); free(margins);
+        return -1;
+    }
 
     enum llama_params_fit_status status = llama_params_fit(path, &mparams, &cparams, ts, ov, margins, n_ctx_min, GGML_LOG_LEVEL_WARN);
 
@@ -562,13 +585,14 @@ struct llama_sampler* ion7_sampler_create(
  * Model quantization
  * ======================================================================= */
 
-int ion7_model_quantize(const char* path_in, const char* path_out, int ftype, int n_threads, int pure, int allow_req, int dry_run)
+int ion7_model_quantize(const char* path_in, const char* path_out, int ftype, int n_threads, int pure, int allow_req, int quant_out, int dry_run)
 {
     llama_model_quantize_params p = llama_model_quantize_default_params();
-    p.ftype            = (enum llama_ftype)ftype;
-    p.nthread          = n_threads;
-    p.pure             = (bool)pure;
-    p.allow_requantize = (bool)allow_req;
-    p.dry_run          = (bool)dry_run;
+    p.ftype                  = (enum llama_ftype)ftype;
+    p.nthread                = n_threads;
+    p.pure                   = (bool)pure;
+    p.allow_requantize       = (bool)allow_req;
+    p.quantize_output_tensor = (bool)quant_out;
+    p.dry_run                = (bool)dry_run;
     return (int)llama_model_quantize(path_in, path_out, &p);
 }
