@@ -43,7 +43,7 @@ local DETOK_BUF_SIZE  = 65536   -- 64  KB for detokenize output
 --- @field _tmpls  cdata   ion7_chat_templates_t* (owned, freed via ffi.gc).
 --- @field _piece_buf   cdata  Scratch buffer for token-to-piece conversion.
 --- @field _piece_big   cdata  Pre-alloc fallback buffer for oversized pieces.
---- @field _piece_cache table  Weak-value cache: token id → piece string.
+--- @field _piece_cache table  Strong cache: token id → piece string (integer keys, GC-safe).
 --- @field _tmpl_buf    cdata  Scratch buffer for chat template output.
 --- @field _dtok_buf    cdata  Scratch buffer for detokenize output.
 local Vocab = {}
@@ -79,7 +79,7 @@ function Vocab.new(lib, model, ptr)
         -- Pre-allocated scratch buffers
         _piece_buf   = _chararr(PIECE_BUF_SIZE),
         _piece_big   = _chararr(PIECE_BIG_SIZE),  -- reused for oversized pieces
-        _piece_cache = setmetatable({}, {__mode = "v"}),  -- weak-value token→string
+        _piece_cache = {},  -- strong cache: integer token id → piece string
         _tmpl_buf    = _chararr(TMPL_BUF_SIZE),
         _dtok_buf    = _chararr(DETOK_BUF_SIZE),
     }, Vocab)

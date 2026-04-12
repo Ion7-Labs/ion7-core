@@ -352,6 +352,7 @@ float ion7_logprob(struct llama_context* ctx, int32_t idx, int32_t token_id)
 {
     LogSoftmaxState s = log_softmax_prepare(ctx, idx);
     if (!s.logits) return -FLT_MAX;
+    if (token_id < 0 || token_id >= s.n) return -FLT_MAX;
     return s.logits[token_id] - s.max_l - (float)log(s.sum);
 }
 
@@ -365,4 +366,30 @@ float ion7_entropy(struct llama_context* ctx, int32_t idx)
         if (p > 0.0) H -= p * log(p);
     }
     return (float)H;
+}
+
+/* Combined logprob + entropy in a single pass over n_vocab.
+ * Avoids computing log_softmax twice when both values are needed. */
+void ion7_logprob_entropy(struct llama_context* ctx, int32_t idx, int32_t token_id, float* out_logprob, float* out_entropy)
+{
+    LogSoftmaxState s = log_softmax_prepare(ctx, idx);
+    if (!s.logits) {
+        if (out_logprob) *out_logprob = -FLT_MAX;
+        if (out_entropy) *out_entropy = 0.0f;
+        return;
+    }
+    if (out_logprob) {
+        if (token_id >= 0 && token_id < s.n)
+            *out_logprob = s.logits[token_id] - s.max_l - (float)log(s.sum);
+        else
+            *out_logprob = -FLT_MAX;
+    }
+    if (out_entropy) {
+        double H = 0.0;
+        for (int32_t i = 0; i < s.n; ++i) {
+            double p = (double)expf(s.logits[i] - s.max_l) / s.sum;
+            if (p > 0.0) H -= p * log(p);
+        }
+        *out_entropy = (float)H;
+    }
 }

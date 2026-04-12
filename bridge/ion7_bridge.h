@@ -4,20 +4,23 @@
  * Copyright (C) 2026 Ion7 Project Contributors
  * SPDX-License-Identifier: MIT
  *
- * This file is part of ion7-core.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * ion7-core is free software: you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- * ion7-core is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with ion7-core. If not, see <https://www.gnu.org/licenses/>.
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  *
  * ──────────────────────────────────────────────────────────────────────────
  * STABILITY CONTRACT - ion7-core v1.x
@@ -133,18 +136,19 @@ void ion7_model_save(const struct llama_model* model, const char* path);
 /**
  * Quantize a GGUF model file.
  *
- * @param path_in   Source GGUF path.
- * @param path_out  Destination GGUF path.
- * @param ftype     Target quantization type (llama_ftype enum value).
- * @param n_threads Worker thread count. 0 = use hardware concurrency.
- * @param pure      Quantize all tensors uniformly (no mixed precision).
- * @param allow_req Allow re-quantizing already-quantized tensors.
- * @param dry_run   Compute the quantization plan without writing output.
- * @return          0 on success, non-zero on failure.
+ * @param path_in      Source GGUF path.
+ * @param path_out     Destination GGUF path.
+ * @param ftype        Target quantization type (llama_ftype enum value).
+ * @param n_threads    Worker thread count. 0 = use hardware concurrency.
+ * @param pure         Quantize all tensors uniformly (no mixed precision).
+ * @param allow_req    Allow re-quantizing already-quantized tensors.
+ * @param quant_out    Quantize the output tensor (embedding/lm_head) too.
+ * @param dry_run      Compute the quantization plan without writing output.
+ * @return             0 on success, non-zero on failure.
  */
 int ion7_model_quantize(const char* path_in, const char* path_out,
                          int ftype, int n_threads,
-                         int pure, int allow_req, int dry_run);
+                         int pure, int allow_req, int quant_out, int dry_run);
 
 /* ---- Model introspection ------------------------------------------------ */
 
@@ -1058,6 +1062,20 @@ float ion7_logprob(struct llama_context* ctx, int32_t idx, int32_t token_id);
  * @return     Entropy in nats (>= 0).
  */
 float ion7_entropy(struct llama_context* ctx, int32_t idx);
+
+/**
+ * Compute logprob AND entropy in a single pass over n_vocab.
+ * Use instead of calling ion7_logprob + ion7_entropy separately when both
+ * are needed — halves the number of iterations over the logit array.
+ *
+ * @param ctx          Inference context.
+ * @param idx          Batch position.
+ * @param token_id     Token for logprob (out of range → *out_logprob = -FLT_MAX).
+ * @param out_logprob  Receives the log-probability. May be NULL.
+ * @param out_entropy  Receives the entropy in nats. May be NULL.
+ */
+void ion7_logprob_entropy(struct llama_context* ctx, int32_t idx, int32_t token_id,
+                          float* out_logprob, float* out_entropy);
 
 #ifdef __cplusplus
 }

@@ -13,6 +13,9 @@
 #include "sampling.h"
 #include "speculative.h"
 
+/* nlohmann/json - for safe tool-call serialisation in ion7_chat_parse */
+#include "nlohmann/json.hpp"
+
 #include <cstring>
 #include <cstdint>
 #include <string>
@@ -80,9 +83,12 @@ int32_t ion7_chat_templates_apply(ion7_chat_templates_t* t, const char** roles, 
         return -2;
     }
 
+    /* Guard against prompts > 2GB: size_t → int32_t would overflow and
+     * make 'needed' negative, causing memcpy to receive a huge size_t value. */
+    if (result.prompt.size() >= (size_t)INT32_MAX) return -3;
     int32_t needed = (int32_t)result.prompt.size() + 1;
     if (buf && buf_len >= needed) {
-        memcpy(buf, result.prompt.c_str(), needed);
+        memcpy(buf, result.prompt.c_str(), (size_t)needed);
     }
     return needed;
 }
@@ -186,7 +192,8 @@ ion7_csampler_t* ion7_csampler_init(
         sp.logit_bias.push_back(lb);
     }
 
-    auto* w = new ion7_csampler;
+    auto* w = new (std::nothrow) ion7_csampler;
+    if (!w) return nullptr;
     w->smpl = common_sampler_init(model, sp);
     if (!w->smpl) { delete w; return nullptr; }
     return w;
@@ -256,7 +263,8 @@ ion7_speculative_t* ion7_speculative_init(
     struct llama_context* ctx_dft,
     int type, int n_draft, int ngram_min, int ngram_max)
 {
-    auto* w = new ion7_speculative;
+    auto* w = new (std::nothrow) ion7_speculative;
+    if (!w) return nullptr;
     w->params.type      = (common_speculative_type)type;
     w->params.n_max     = (n_draft > 0) ? n_draft : 16;
     w->params.n_min     = 0;
@@ -332,27 +340,32 @@ int ion7_chat_parse(ion7_chat_templates_t* t, const char* text, int enable_think
     safe_copy(msg.content, content_buf, content_len, &truncated);
     safe_copy(msg.reasoning_content, thinking_buf, thinking_len, &truncated);
 
-    /* tool_calls as a JSON array; empty response → "[]" */
+    /* Serialise tool_calls as a JSON array using nlohmann for correct escaping.
+     * tc.arguments is already a JSON value from the parser — parse it back so
+     * nlohmann embeds it as a proper sub-object rather than a quoted string. */
     if (msg.tool_calls.empty()) {
         if (tools_buf && tools_len >= 3) { memcpy(tools_buf, "[]", 3); }
         if (out_has_tools) *out_has_tools = 0;
     } else {
-        std::string tools_json;
-        tools_json.reserve(128 * msg.tool_calls.size());
-        tools_json += '[';
-        for (size_t i = 0; i < msg.tool_calls.size(); i++) {
-            if (i > 0) tools_json += ',';
-            const auto& tc = msg.tool_calls[i];
-            tools_json += "{\"name\":\"";
-            tools_json += tc.name;
-            tools_json += "\",\"arguments\":";
-            tools_json += tc.arguments;
-            tools_json += ",\"id\":\"";
-            tools_json += tc.id;
-            tools_json += "\"}";
+        try {
+            nlohmann::json arr = nlohmann::json::array();
+            for (const auto& tc : msg.tool_calls) {
+                nlohmann::json obj;
+                obj["name"] = tc.name;
+                obj["id"]   = tc.id;
+                try {
+                    obj["arguments"] = nlohmann::json::parse(tc.arguments);
+                } catch (...) {
+                    /* Malformed arguments: embed as raw string rather than drop. */
+                    obj["arguments"] = tc.arguments;
+                }
+                arr.push_back(std::move(obj));
+            }
+            std::string tools_json = arr.dump();
+            safe_copy(tools_json, tools_buf, tools_len, &truncated);
+        } catch (...) {
+            if (tools_buf && tools_len >= 3) { memcpy(tools_buf, "[]", 3); }
         }
-        tools_json += ']';
-        safe_copy(tools_json, tools_buf, tools_len, &truncated);
         if (out_has_tools) *out_has_tools = 1;
     }
     return truncated ? 1 : 0;

@@ -24,14 +24,17 @@ local POOLING_NAMES = {
 -- ── Context ───────────────────────────────────────────────────────────────────
 
 --- @class Context
---- @field _ptr     cdata   llama_context* (freed on GC via ffi.gc).
---- @field _lib     cdata   libllama.so namespace.
---- @field _bridge  cdata   ion7_bridge.so namespace.
---- @field _n_past  number  Current KV cache fill position (tracks how many tokens decoded).
---- @field _n_batch number  Batch capacity (cached at creation, immutable).
---- @field _n_ctx   number  Context window size (cached, immutable).
---- @field _mem     cdata   llama_memory_t (cached, immutable for context lifetime).
+--- @field _ptr        cdata   llama_context* (freed on GC via ffi.gc).
+--- @field _lib        cdata   libllama.so namespace.
+--- @field _bridge     cdata   ion7_bridge.so namespace.
+--- @field _n_past     number  Current KV cache fill position (tracks how many tokens decoded).
+--- @field _n_batch    number  Batch capacity (cached at creation, immutable).
+--- @field _n_ctx      number  Context window size (cached, immutable).
+--- @field _mem        cdata   llama_memory_t (cached, immutable for context lifetime).
 --- @field _decode_batch llama_batch  Pre-allocated batch (n_batch capacity), reused forever.
+--- @field _model_ref  table?  Parent Model object (set by Model:context(), used for n_embd etc.)
+--- @field _n_vocab    number? Vocabulary size (set by Model:context()).
+--- @field _is_embed   bool?   True when created via Model:embedding_context().
 local Context = {}
 Context.__index = Context
 
@@ -276,6 +279,8 @@ end
 function Context:decode_multi(tokens, seq_id)
     local n = #tokens
     assert(n > 0, "[ion7.core.context] decode_multi: empty token list")
+    assert(n <= self._n_batch, string.format(
+        "[ion7.core.context] decode_multi: %d tokens exceeds batch capacity %d", n, self._n_batch))
     seq_id    = seq_id or 0
     local lib = self._lib
     local b   = self._decode_batch
@@ -474,7 +479,9 @@ end
 function Context:embedding(seq_id, dim)
     local ptr = self:embedding_ptr(seq_id)
     if ptr == nil then return nil end
-    dim       = dim or 4096
+    if not dim then
+        dim = self._model_ref and tonumber(self._model_ref:n_embd()) or 4096
+    end
     local vec = {}
     for i = 0, dim - 1 do
         vec[i + 1] = ptr[i]   -- LuaJIT: float* index auto-converts to Lua number

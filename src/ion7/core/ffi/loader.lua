@@ -71,11 +71,8 @@ float         ion7_model_rope_freq_scale_train(const struct llama_model* m);
 const char*   ion7_model_rope_type     (const struct llama_model* m);
 const char*   ion7_model_cls_label     (const struct llama_model* m, uint32_t i);
 int32_t       ion7_model_decoder_start_token(const struct llama_model* m);
-int           ion7_params_fit          (const char* path, int32_t* n_gpu_layers,
-                                        uint32_t* n_ctx, uint32_t n_ctx_min);
-int           ion7_model_quantize      (const char* path_in, const char* path_out,
-                                        int ftype, int n_threads,
-                                        int pure, int allow_req, int dry_run);
+int           ion7_params_fit          (const char* path, int32_t* n_gpu_layers, uint32_t* n_ctx, uint32_t n_ctx_min);
+int           ion7_model_quantize      (const char* path_in, const char* path_out, int ftype, int n_threads, int pure, int allow_req, int quant_out, int dry_run);
 
 /* ---- Context ------------------------------------------------------------ */
 struct llama_context* ion7_context_create(
@@ -318,6 +315,7 @@ int ion7_json_merge   (const char* base, const char* overlay, char* out, size_t 
 /* ---- Logprob / Entropy (C-side, ~50x faster than Lua for n_vocab loop) - */
 float ion7_logprob(struct llama_context* ctx, int32_t idx, int32_t token_id);
 float ion7_entropy(struct llama_context* ctx, int32_t idx);
+void  ion7_logprob_entropy(struct llama_context* ctx, int32_t idx, int32_t token_id, float* out_logprob, float* out_entropy);
 ]]
 
 -- ── Internal ─────────────────────────────────────────────────────────────────

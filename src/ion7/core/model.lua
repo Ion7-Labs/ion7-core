@@ -128,6 +128,7 @@ function Model.quantize(inp_path, out_path, opts)
         params.nthread,
         params.pure and 1 or 0,
         params.allow_requantize and 1 or 0,
+        params.quantize_output_tensor and 1 or 0,
         params.dry_run and 1 or 0
     ))
 end
@@ -388,13 +389,14 @@ end
 ---     n_head, n_head_kv, n_swa, n_vocab, vocab_type,
 ---     has_encoder, is_recurrent, is_hybrid, is_diffusion }
 function Model:info()
-    local v = self:vocab()
+    local v  = self:vocab()
+    local sz = self:size()
     return {
         path         = self.path,
         desc         = self:desc(),
         n_params     = self:n_params(),
-        size         = self:size(),
-        size_gb      = self:size() / (1024^3),
+        size         = sz,
+        size_gb      = sz / (1024^3),
         n_ctx_train  = self:n_ctx_train(),
         n_embd       = self:n_embd(),
         n_embd_inp   = self:n_embd_inp(),
