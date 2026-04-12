@@ -43,7 +43,12 @@ endif
 # Path to ion7-doc (sibling repo by default)
 ION7_DOC ?= $(abspath ../ion7-doc)
 
-.PHONY: build test docs clean all help llama
+# Output directory for generated docs.
+# Override to publish directly to the github.io repo:
+#   make docs DOCS_OUT=/path/to/ion7-labs.github.io
+DOCS_OUT ?= $(ION7_DOC)/docs
+
+.PHONY: build test docs pages clean all help llama
 
 help:
 	@echo "ion7-core build targets:"
@@ -51,7 +56,9 @@ help:
 	@echo "  make build               Build ion7_bridge.so (auto-builds llama.cpp)"
 	@echo "  make build LIB_DIR=PATH  Build using an external llama.cpp"
 	@echo "  make test  ION7_MODEL=/path/to/model.gguf"
-	@echo "  make docs                Generate HTML docs → $(ION7_DOC)/docs/"
+	@echo "  make docs                Generate HTML docs → $(DOCS_OUT)/"
+	@echo "  make docs DOCS_OUT=PATH  Generate docs to a custom directory"
+	@echo "  make pages PAGES_DIR=PATH  Generate docs directly to github.io repo"
 	@echo ""
 	@echo "Vendor build config:"
 	@echo "  CUDA_ARCH=$(CUDA_ARCH)  86=RTX30xx  89=RTX40xx  80=A100"
@@ -92,11 +99,16 @@ test: build
 docs:
 	@test -f $(ION7_DOC)/bin/gendoc.lua || \
 	  (echo "[ion7-core] ion7-doc not found at $(ION7_DOC)" && exit 1)
+	@mkdir -p $(DOCS_OUT)
 	@luajit $(ION7_DOC)/bin/gendoc.lua \
 	  $(abspath src/ion7/core) \
-	  $(ION7_DOC)/docs \
+	  $(DOCS_OUT) \
 	  $(abspath README.md)
-	@echo "[ion7-core] docs → $(ION7_DOC)/docs/index.html"
+
+pages:
+	@test -d "$(PAGES_DIR)" || \
+	  (echo "[ion7-core] PAGES_DIR not set or not found: $(PAGES_DIR)" && exit 1)
+	@$(MAKE) docs DOCS_OUT=$(PAGES_DIR)
 
 all: build test
 

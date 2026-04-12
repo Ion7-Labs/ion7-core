@@ -1,0 +1,53 @@
+name: Publish docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "README.md"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ion7-core
+        uses: actions/checkout@v4
+        with:
+          path: ion7-core
+
+      - name: Checkout ion7-doc
+        uses: actions/checkout@v4
+        with:
+          repository: ion7-labs/ion7-doc
+          path: ion7-doc
+          # token: ${{ secrets.PAGES_TOKEN }}   # uncomment if ion7-doc is private
+
+      - name: Install LuaJIT
+        run: sudo apt-get install -y luajit
+
+      - name: Build docs
+        run: |
+          mkdir -p site
+          luajit ion7-doc/bin/gendoc.lua \
+            ${{ github.workspace }}/ion7-core/src/ion7/core \
+            ${{ github.workspace }}/site \
+            ${{ github.workspace }}/ion7-core/README.md
+
+      - name: Push to ion7-labs.github.io
+        env:
+          TOKEN: ${{ secrets.PAGES_TOKEN }}
+        run: |
+          cd site
+          git init -b main
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add -A
+          git diff --cached --quiet && echo "Nothing to deploy." && exit 0
+          git commit -m "docs: $(date -u +'%Y-%m-%d') — ion7-core@$(echo ${{ github.sha }} | cut -c1-7)"
+          git push --force \
+            "https://x-access-token:${TOKEN}@github.com/ion7-labs/ion7-labs.github.io.git" \
+            HEAD:main
