@@ -593,14 +593,15 @@ void ion7_opt_free(ion7_opt_state_t* state);
  *
  * @param tokens    Flat array of llama_token (entire corpus).
  * @param n_tokens  Total token count.
- * @param n_ctx     Sequence length / context window.
+ * @param stride    Tokens between the start of consecutive samples.
+ *                  Pass llama_n_ctx(ctx) for non-overlapping windows.
  * @return          Dataset handle. Free with ion7_opt_dataset_free.
  */
 ggml_opt_dataset_t ion7_opt_dataset_create(
     struct llama_context* ctx,
     const llama_token*    tokens,
     int64_t               n_tokens,
-    int64_t               n_ctx);
+    int64_t               stride);
 
 /** Free a dataset. */
 void ion7_opt_dataset_free(ggml_opt_dataset_t dataset);

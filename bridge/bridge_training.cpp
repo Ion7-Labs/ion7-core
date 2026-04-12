@@ -66,14 +66,15 @@ void ion7_opt_free(ion7_opt_state_t* state)
  *
  * tokens   : flat array of llama_token (the full corpus, pre-tokenised)
  * n_tokens : number of tokens
- * n_ctx    : context window size (stride between samples)
+ * stride   : number of tokens between the start of consecutive samples
+ *            (pass llama_n_ctx(ctx) for non-overlapping windows)
  *
  * Returns an opaque dataset handle. Free with ion7_opt_dataset_free.
  */
-ggml_opt_dataset_t ion7_opt_dataset_create(struct llama_context* ctx, const llama_token* tokens, int64_t n_tokens, int64_t n_ctx)
+ggml_opt_dataset_t ion7_opt_dataset_create(struct llama_context* ctx, const llama_token* tokens, int64_t n_tokens, int64_t stride)
 {
     std::vector<llama_token> tok_vec(tokens, tokens + n_tokens);
-    return common_opt_dataset_init(ctx, tok_vec, n_ctx);
+    return common_opt_dataset_init(ctx, tok_vec, stride);
 }
 
 void ion7_opt_dataset_free(ggml_opt_dataset_t dataset)

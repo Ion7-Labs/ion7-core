@@ -341,7 +341,6 @@ llama_token        llama_vocab_sep            (const llama_vocab* vocab);
 llama_token        llama_vocab_nl             (const llama_vocab* vocab);
 llama_token        llama_vocab_pad            (const llama_vocab* vocab);
 llama_token        llama_vocab_mask           (const llama_vocab* vocab);
-llama_token        llama_vocab_cls            (const llama_vocab* vocab);
 bool               llama_vocab_get_add_bos    (const llama_vocab* vocab);
 bool               llama_vocab_get_add_eos    (const llama_vocab* vocab);
 bool               llama_vocab_get_add_sep    (const llama_vocab* vocab);
@@ -415,7 +414,7 @@ const llama_model* llama_get_model  (const llama_context* ctx);
 llama_memory_t     llama_get_memory (const llama_context* ctx);
 
 /* Batch */
-llama_batch llama_batch_get_one(const llama_token* tokens, int32_t n_tokens);
+llama_batch llama_batch_get_one(llama_token* tokens, int32_t n_tokens);
 llama_batch llama_batch_init   (int32_t n_tokens, int32_t embd, int32_t n_seq_max);
 void        llama_batch_free   (llama_batch batch);
 
@@ -532,7 +531,7 @@ llama_sampler* llama_sampler_init_xtc        (float prob, float threshold, size_
 llama_sampler* llama_sampler_init_mirostat   (int32_t n_vocab, uint32_t seed, float tau, float eta, int32_t m);
 llama_sampler* llama_sampler_init_mirostat_v2(uint32_t seed, float tau, float eta);
 llama_sampler* llama_sampler_init_grammar    (const llama_vocab* vocab, const char* grammar_str, const char* grammar_root);
-llama_sampler* llama_sampler_init_grammar_lazy_patterns(const llama_vocab* vocab, const char* grammar_str, const char* grammar_root, const char** trigger_words, size_t num_trigger_words, const llama_token* trigger_tokens, size_t num_trigger_tokens, const char** trigger_patterns, size_t num_trigger_patterns);
+llama_sampler* llama_sampler_init_grammar_lazy_patterns(const llama_vocab* vocab, const char* grammar_str, const char* grammar_root, const char** trigger_patterns, size_t num_trigger_patterns, const llama_token* trigger_tokens, size_t num_trigger_tokens);
 llama_sampler* llama_sampler_init_penalties  (int32_t penalty_last_n, float penalty_repeat, float penalty_freq, float penalty_present);
 llama_sampler* llama_sampler_init_dry        (const llama_vocab* vocab, int32_t n_ctx_train, float dry_multiplier, float dry_base, int32_t dry_allowed_length, int32_t dry_penalty_last_n, const char** seq_breakers, size_t num_breakers);
 llama_sampler* llama_sampler_init_adaptive_p (float target, float decay, uint32_t seed);

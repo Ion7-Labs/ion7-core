@@ -145,7 +145,7 @@ typedef struct ion7_opt_state ion7_opt_state_t;
 typedef struct ggml_opt_dataset* ggml_opt_dataset_t;
 ion7_opt_state_t*  ion7_opt_init (struct llama_context* ctx, struct llama_model* model, int optimizer, float lr);
 void ion7_opt_free (ion7_opt_state_t* state);
-ggml_opt_dataset_t ion7_opt_dataset_create(struct llama_context* ctx, const llama_token* tokens, int64_t n_tokens, int64_t n_ctx);
+ggml_opt_dataset_t ion7_opt_dataset_create(struct llama_context* ctx, const llama_token* tokens, int64_t n_tokens, int64_t stride);
 void ion7_opt_dataset_free (ggml_opt_dataset_t dataset);
 float ion7_opt_epoch (struct llama_context* ctx, ggml_opt_dataset_t dataset, float val_split);
 

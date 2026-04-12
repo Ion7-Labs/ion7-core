@@ -239,8 +239,8 @@ function Vocab:get_add_eos() return self._lib.llama_vocab_get_add_eos(self._ptr)
 --- Alias: n_tokens() = n_vocab()
 function Vocab:n_tokens() return self:n_vocab() end
 
---- CLS token ID (-1 if not present).
-function Vocab:cls() return tonumber(self._lib.llama_vocab_cls(self._ptr)) end
+--- CLS token ID. CLS == BOS in llama.cpp (llama_vocab_cls is deprecated).
+function Vocab:cls() return tonumber(self._lib.llama_vocab_bos(self._ptr)) end
 
 --- Get the float score of a token (used in Unigram/SPM tokenizers).
 --- @param  token  number
