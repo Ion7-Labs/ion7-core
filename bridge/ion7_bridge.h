@@ -493,7 +493,7 @@ struct llama_sampler* ion7_sampler_create(
 void ion7_print_struct_sizes(void);
 
 /* =========================================================================
- * ── C++ EXTENSIONS (libcommon — bridge v1.1) ─────────────────────────────
+ * ── C++ EXTENSIONS (libcommon - bridge v1.1) ─────────────────────────────
  * Requires libcommon. Available when ION7_BRIDGE_VERSION >= "1.1.0".
  * ======================================================================= */
 
@@ -1070,7 +1070,7 @@ float ion7_entropy(struct llama_context* ctx, int32_t idx);
 /**
  * Compute logprob AND entropy in a single pass over n_vocab.
  * Use instead of calling ion7_logprob + ion7_entropy separately when both
- * are needed — halves the number of iterations over the logit array.
+ * are needed - halves the number of iterations over the logit array.
  *
  * @param ctx          Inference context.
  * @param idx          Batch position.

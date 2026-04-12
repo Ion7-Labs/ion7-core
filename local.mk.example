@@ -1,0 +1,14 @@
+# Copy to local.mk and adjust to your llama.cpp install.
+# This file is gitignored - safe to store local paths.
+#
+# Example (external llama.cpp build):
+LIB_DIR        = /home/youruser/llama.cpp/build/bin
+COMMON_LIB_DIR = /home/youruser/llama.cpp/build/common
+
+# Optional: CUDA architecture for the vendor build (if using make llama)
+# CUDA_ARCH = 86    # RTX 30xx (Ampere)
+# CUDA_ARCH = 89    # RTX 40xx (Ada Lovelace)
+# CUDA_ARCH = 80    # A100
+
+# Optional: CPU tuning
+# MARCH = native

@@ -43,7 +43,7 @@ local DETOK_BUF_SIZE  = 65536   -- 64  KB for detokenize output
 --- @field _tmpls  cdata   ion7_chat_templates_t* (owned, freed via ffi.gc).
 --- @field _piece_buf   cdata  Scratch buffer for token-to-piece conversion.
 --- @field _piece_big   cdata  Pre-alloc fallback buffer for oversized pieces.
---- @field _piece_cache table  Strong cache: token id → piece string (integer keys, GC-safe).
+--- @field _piece_cache table  Strong cache: token id → piece string.
 --- @field _tmpl_buf    cdata  Scratch buffer for chat template output.
 --- @field _dtok_buf    cdata  Scratch buffer for detokenize output.
 local Vocab = {}
@@ -217,13 +217,30 @@ function Vocab:nl()  return tonumber(self._lib.llama_vocab_nl(self._ptr))  end
 --- @return number  Padding token ID.
 function Vocab:pad() return tonumber(self._lib.llama_vocab_pad(self._ptr)) end
 
---- Fill-in-the-Middle token accessors.
+--- Fill-in-the-Middle (FIM) prefix token ID.
+--- Used for code infill tasks (FIM-prefix / suffix / middle tokens).
+--- Returns -1 if the model does not support FIM.
 --- @return number
 function Vocab:fim_pre() return tonumber(self._lib.llama_vocab_fim_pre(self._ptr)) end
+
+--- Fill-in-the-Middle suffix token ID. Returns -1 if unsupported.
+--- @return number
 function Vocab:fim_suf() return tonumber(self._lib.llama_vocab_fim_suf(self._ptr)) end
+
+--- Fill-in-the-Middle middle token ID. Returns -1 if unsupported.
+--- @return number
 function Vocab:fim_mid() return tonumber(self._lib.llama_vocab_fim_mid(self._ptr)) end
+
+--- Fill-in-the-Middle pad token ID. Returns -1 if unsupported.
+--- @return number
 function Vocab:fim_pad() return tonumber(self._lib.llama_vocab_fim_pad(self._ptr)) end
+
+--- Fill-in-the-Middle repo token ID. Returns -1 if unsupported.
+--- @return number
 function Vocab:fim_rep() return tonumber(self._lib.llama_vocab_fim_rep(self._ptr)) end
+
+--- Fill-in-the-Middle separator token ID. Returns -1 if unsupported.
+--- @return number
 function Vocab:fim_sep() return tonumber(self._lib.llama_vocab_fim_sep(self._ptr)) end
 
 --- @return number  Sentence separator token ID.
@@ -233,7 +250,12 @@ function Vocab:mask() return tonumber(self._lib.llama_vocab_mask(self._ptr)) end
 --- @return number  CLS (classification) token ID.
 --- @return bool  Whether add_sep is set.
 function Vocab:get_add_sep() return self._lib.llama_vocab_get_add_sep(self._ptr) == 1 end
+--- Returns true if the model vocabulary adds a BOS token automatically.
+--- @return boolean
 function Vocab:get_add_bos() return self._lib.llama_vocab_get_add_bos(self._ptr) == 1 end
+
+--- Returns true if the model vocabulary adds an EOS token automatically.
+--- @return boolean
 function Vocab:get_add_eos() return self._lib.llama_vocab_get_add_eos(self._ptr) == 1 end
 
 --- Alias: n_tokens() = n_vocab()

@@ -25,7 +25,7 @@
  *
  * ──────────────────────────────────────────────────────────────────────────
  * Migrated from C to C++ (ion7-core v1.1) to enable libcommon integration.
- * The public API is unchanged — all symbols remain extern "C".
+ * The public API is unchanged - all symbols remain extern "C".
  * ──────────────────────────────────────────────────────────────────────────
  */
 

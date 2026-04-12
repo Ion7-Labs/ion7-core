@@ -75,6 +75,9 @@ function SamplerBuilder:temp(t)
     return self:temperature(t)
 end
 
+--- Add a temperature sampler (long form of temp()).
+--- @param  t  number  Temperature (0 = greedy, 1 = unmodified, >1 = more random).
+--- @return SamplerBuilder
 function SamplerBuilder:temperature(t)
     return push(self, { type = "temperature", t = t })
 end
@@ -92,6 +95,11 @@ function SamplerBuilder:temp_dynamic(base, range, exponent)
     return self:temperature_dynamic(base, range, exponent)
 end
 
+--- Add a dynamic temperature sampler (long form of temp_dynamic()).
+--- @param  base      number   Center temperature.
+--- @param  range     number   Half-width — final temp drawn from [base-range, base+range].
+--- @param  exponent  number?  Exponent for the distribution (default: 1.0).
+--- @return SamplerBuilder
 function SamplerBuilder:temperature_dynamic(base, range, exponent)
     return push(self, {
         type     = "temperature_ext",
@@ -132,11 +140,12 @@ function SamplerBuilder:top_n_sigma(n)
     return push(self, { type = "top_n_sigma", n = n })
 end
 
---- Add a Locally Typical sampling.
---- @param  p         number
---- @param  min_keep  number?
+--- Add Locally Typical sampling (Meister et al. 2023).
+--- Selects tokens whose conditional information content is typical of the
+--- expected value, producing more natural and coherent output than top-p alone.
+--- @param  p         number   Typicality threshold in (0, 1]. Lower = more restrictive.
+--- @param  min_keep  number?  Minimum tokens to keep (default: 1).
 --- @return SamplerBuilder
-
 function SamplerBuilder:typical(p, min_keep)
     return push(self, { type = "typical", p = p, min_keep = min_keep or 1 })
 end
@@ -652,7 +661,7 @@ end
 -- Sampler.json() is available in ion7-grammar module (not in core).
 
 -- ── CSampler ─────────────────────────────────────────────────────────────────
--- Extracted to sampler/common.lua — wraps ion7_csampler_t (common_sampler).
+-- Extracted to sampler/common.lua - wraps ion7_csampler_t (common_sampler).
 -- Supports DRY, XTC, mirostat, grammar_lazy, logit_bias, adaptive sampling.
 -- See sampler/common.lua for the full class and all constructor options.
 

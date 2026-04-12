@@ -29,7 +29,7 @@ local POOLING_NAMES = {
 --- @field _n_batch    number  Batch capacity (cached, immutable).
 --- @field _n_ctx      number  Context window size (cached, immutable).
 --- @field _mem        cdata   llama_memory_t (cached, immutable).
---- @field _decode_batch llama_batch  Pre-allocated batch, reused forever.
+--- @field _decode_batch cdata Pre-allocated batch, reused forever.
 --- @field _model_ref  table?  Parent Model object (set by Model:context()).
 --- @field _n_vocab    number? Vocabulary size (set by Model:context()).
 --- @field _is_embed   bool?   True when created via Model:embedding_context().

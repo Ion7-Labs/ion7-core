@@ -344,7 +344,7 @@ int ion7_chat_parse(ion7_chat_templates_t* t, const char* text, int enable_think
     safe_copy(msg.reasoning_content, thinking_buf, thinking_len, &truncated);
 
     /* Serialise tool_calls as a JSON array using nlohmann for correct escaping.
-     * tc.arguments is already a JSON value from the parser — parse it back so
+     * tc.arguments is already a JSON value from the parser - parse it back so
      * nlohmann embeds it as a proper sub-object rather than a quoted string. */
     if (msg.tool_calls.empty()) {
         if (tools_buf && tools_len >= 3) { memcpy(tools_buf, "[]", 3); }

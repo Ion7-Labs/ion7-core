@@ -21,7 +21,7 @@ Threadpool.__index = Threadpool
 
 --- Create a CPU threadpool.
 --- @param  n_threads  number  Worker thread count.
---- @
+--- @return Threadpool
 --- @error  If creation fails.
 function Threadpool.new(n_threads)
     assert(type(n_threads) == "number" and n_threads > 0,
@@ -39,8 +39,6 @@ function Threadpool.new(n_threads)
         _n        = n_threads,
     }, Threadpool)
 end
-
---- @return number  Thread count.
 
 --- Return the raw ggml_threadpool_t pointer.
 --- Pass to ctx:attach_threadpool().

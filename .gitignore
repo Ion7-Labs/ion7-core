@@ -6,3 +6,5 @@ bridge/*.o
 # LuaRocks
 *.rock
 *.rockspec.lock
+local.mk
+docs/api/
