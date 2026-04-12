@@ -98,20 +98,16 @@ void     ion7_context_free(struct llama_context* ctx);
 /* ---- KV cache ----------------------------------------------------------- */
 void ion7_kv_clear    (struct llama_context* ctx);
 void ion7_kv_seq_rm   (struct llama_context* ctx, int32_t seq, int32_t p0, int32_t p1);
-void ion7_kv_seq_cp   (struct llama_context* ctx, int32_t src, int32_t dst,
-                        int32_t p0, int32_t p1);
+void ion7_kv_seq_cp   (struct llama_context* ctx, int32_t src, int32_t dst, int32_t p0, int32_t p1);
 void ion7_kv_seq_keep (struct llama_context* ctx, int32_t seq);
-void ion7_kv_seq_shift(struct llama_context* ctx, int32_t seq,
-                        int32_t p0, int32_t p1, int32_t delta);
+void ion7_kv_seq_shift(struct llama_context* ctx, int32_t seq, int32_t p0, int32_t p1, int32_t delta);
 
 /* ---- State -------------------------------------------------------------- */
 size_t ion7_state_size     (struct llama_context* ctx);
 size_t ion7_state_get      (struct llama_context* ctx, uint8_t* buf, size_t sz);
 int    ion7_state_set      (struct llama_context* ctx, const uint8_t* buf, size_t sz);
-int    ion7_state_save_file(struct llama_context* ctx, const char* path,
-                             const llama_token* tokens, size_t n);
-int    ion7_state_load_file(struct llama_context* ctx, const char* path,
-                             llama_token* out, size_t cap, size_t* n_out);
+int    ion7_state_save_file(struct llama_context* ctx, const char* path, const llama_token* tokens, size_t n);
+int    ion7_state_load_file(struct llama_context* ctx, const char* path, llama_token* out, size_t cap, size_t* n_out);
 size_t ion7_state_seq_size (struct llama_context* ctx, int32_t seq_id);
 int    ion7_state_seq_save (struct llama_context* ctx, const char* path, int32_t seq_id);
 int    ion7_state_seq_load (struct llama_context* ctx, const char* path, int32_t dest_seq_id);
@@ -121,21 +117,14 @@ struct llama_adapter_lora* ion7_lora_load    (struct llama_model* model, const c
 void   ion7_lora_free    (struct llama_adapter_lora* adapter);
 int    ion7_lora_apply   (struct llama_context* ctx, struct llama_adapter_lora* a, float scale);
 int    ion7_lora_remove  (struct llama_context* ctx);
-int    ion7_lora_meta_val(const struct llama_adapter_lora* a, const char* key,
-                           char* buf, size_t sz);
+int    ion7_lora_meta_val(const struct llama_adapter_lora* a, const char* key, char* buf, size_t sz);
 
 /* ---- Chat templates (Jinja2, libcommon) --------------------------------- */
 typedef struct common_chat_templates ion7_chat_templates_t;
 ion7_chat_templates_t* ion7_chat_templates_init   (const struct llama_model* model, const char* tmpl_override);
 void    ion7_chat_templates_free   (ion7_chat_templates_t* t);
 int     ion7_chat_templates_support_thinking(const ion7_chat_templates_t* t);
-int32_t ion7_chat_templates_apply  (ion7_chat_templates_t* t,
-                                    const char** roles,
-                                    const char** contents,
-                                    size_t n_msgs,
-                                    int add_ass,
-                                    int enable_thinking,
-                                    char* buf, int32_t buf_len);
+int32_t ion7_chat_templates_apply  (ion7_chat_templates_t* t, const char** roles, const char** contents, size_t n_msgs, int add_ass, int enable_thinking, char* buf, int32_t buf_len);
 
 /* ---- Reasoning budget --------------------------------------------------- */
 struct llama_sampler* ion7_reasoning_budget_init(const struct llama_model* model, int32_t n_budget);
