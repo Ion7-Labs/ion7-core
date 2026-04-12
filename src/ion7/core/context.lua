@@ -128,6 +128,13 @@ function Context:n_past()
     return self._n_past
 end
 
+--- Set the KV fill position (used after snapshot/restore to realign the Lua
+--- position tracker with the restored C-side state).
+--- @param  n  number
+function Context:set_n_past(n)
+    self._n_past = n
+end
+
 --- @return number  Context window per sequence.
 function Context:n_ctx_seq()
     return tonumber(self._lib.llama_n_ctx_seq(self._ptr))
