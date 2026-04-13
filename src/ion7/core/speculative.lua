@@ -29,6 +29,9 @@ Speculative.__index = Speculative
 
 --- Draft model speculative decoding (requires ctx_dft).
 Speculative.DRAFT        = 1
+--- EAGLE3 speculative heads on the target model itself (no ctx_dft needed).
+--- Requires a model that ships EAGLE3 draft heads in its GGUF metadata.
+Speculative.EAGLE3       = 2
 --- Simple n-gram prediction (no draft model).
 Speculative.NGRAM_SIMPLE = 3
 --- N-gram with prediction map (no draft model).
@@ -38,6 +41,7 @@ Speculative.NGRAM_CACHE  = 7
 
 local _TYPE_MAP = {
     draft        = 1,
+    eagle3       = 2,
     ngram_simple = 3,
     ngram_map_k  = 4,
     ngram_cache  = 7,
