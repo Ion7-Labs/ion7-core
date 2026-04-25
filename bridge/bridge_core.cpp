@@ -32,6 +32,7 @@
 #include "ion7_bridge.h"
 #include "llama.h"
 #include "ggml-cpu.h"
+#include "fit.h"   /* common_fit_params + common_params_fit_status (libcommon) */
 #include "bridge_internal.hpp"
 
 #include <cstdio>
@@ -219,9 +220,10 @@ int ion7_params_fit(const char* path, int32_t* n_gpu_layers, uint32_t* n_ctx, ui
         return -1;
     }
 
-    enum llama_params_fit_status status = llama_params_fit(path, &mparams, &cparams, ts, ov, margins, n_ctx_min, GGML_LOG_LEVEL_WARN);
+    enum common_params_fit_status status = common_fit_params(
+        path, &mparams, &cparams, ts, ov, margins, n_ctx_min, GGML_LOG_LEVEL_WARN);
 
-    if (status == LLAMA_PARAMS_FIT_STATUS_SUCCESS) {
+    if (status == COMMON_PARAMS_FIT_STATUS_SUCCESS) {
         *n_gpu_layers = mparams.n_gpu_layers;
         *n_ctx        = cparams.n_ctx;
     }

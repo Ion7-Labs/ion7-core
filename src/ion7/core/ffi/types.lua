@@ -127,10 +127,10 @@ enum llama_split_mode {
     LLAMA_SPLIT_MODE_TENSOR = 3,
 };
 
-enum llama_params_fit_status {
-    LLAMA_PARAMS_FIT_STATUS_SUCCESS = 0,
-    LLAMA_PARAMS_FIT_STATUS_FAILURE = 1,
-    LLAMA_PARAMS_FIT_STATUS_ERROR   = 2,
+enum common_params_fit_status {
+    COMMON_PARAMS_FIT_STATUS_SUCCESS = 0,
+    COMMON_PARAMS_FIT_STATUS_FAILURE = 1,
+    COMMON_PARAMS_FIT_STATUS_ERROR   = 2,
 };
 
 /* ggml types used for KV cache quantization */
