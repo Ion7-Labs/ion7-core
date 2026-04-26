@@ -26,7 +26,7 @@
 #   make LIB_DIR=... COMMON_LIB_DIR=/path/to/llama.cpp/build/common
 #
 # Bridge v1.1 - C++ build with libcommon integration.
-# Requires: libllama.so (LIB_DIR) + libcommon.a (COMMON_LIB_DIR)
+# Requires: libllama.so (LIB_DIR) + libllama-common.so (LIB_DIR or COMMON_LIB_DIR)
 #
 # Source layout (split from monolithic ion7_bridge.cpp):
 #   bridge_core.cpp     - llama.h layer (model, context, KV, state, samplers)
@@ -70,22 +70,22 @@ CXXFLAGS := -O2 -fPIC -std=c++17 -Wall -Wextra -flto=auto \
             -isystem $(COMMON_INC) -isystem $(VENDOR_INC)
 
 # Link flags split into two groups so that object files are scanned BEFORE
-# the static archive.  GNU ld resolves symbols from archives lazily (left to
-# right), so BRIDGE_OBJS must appear between LDFLAGSF and LDFLAGSL:
+# the libraries.  GNU ld resolves symbols lazily (left to right), so
+# BRIDGE_OBJS must appear between LDFLAGSF and LDFLAGSL:
 #   $(CXX) $(LDFLAGSF) -o $(BRIDGE_SO) $(BRIDGE_OBJS) $(LDFLAGSL)
 #
 # On macOS, -undefined dynamic_lookup defers resolution of ggml symbols to
 # load time (they arrive transitively via libllama.dylib at runtime).
 UNAME := $(shell uname -s)
 ifeq ($(UNAME), Darwin)
-    LDFLAGSF := -shared -L$(LIB_DIR) -Wl,-rpath,$(LIB_DIR) \
+    LDFLAGSF := -shared -L$(LIB_DIR) -L$(COMMON_LIB_DIR) \
+                -Wl,-rpath,$(LIB_DIR) \
                 -Wl,-undefined,dynamic_lookup
-    LDFLAGSL := -lllama \
-                $(COMMON_LIB_DIR)/libcommon.a
+    LDFLAGSL := -lllama -lllama-common
 else
-    LDFLAGSF := -shared -L$(LIB_DIR) -Wl,-rpath,$(LIB_DIR)
-    LDFLAGSL := -lllama \
-                $(COMMON_LIB_DIR)/libcommon.a
+    LDFLAGSF := -shared -L$(LIB_DIR) -L$(COMMON_LIB_DIR) \
+                -Wl,-rpath,$(LIB_DIR)
+    LDFLAGSL := -lllama -lllama-common
 endif
 
 all: $(BRIDGE_SO)
