@@ -49,11 +49,9 @@ jobs:
             backend:   metal
             cmake_flags: "-DGGML_CUDA=OFF -DGGML_METAL=ON"
             apt_extra:  ""
-          - target:    macos-x86_64-cpu
-            os:        macos-13
-            backend:   cpu
-            cmake_flags: "-DGGML_CUDA=OFF"
-            apt_extra:  ""
+          # Intel Mac (`macos-13`) was retired from hosted runners in
+          # April 2025. Apple-Silicon-only from here ; Intel users can
+          # still build from source.
 
     runs-on: ${{ matrix.os }}
 
