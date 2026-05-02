@@ -33,33 +33,66 @@
 
 /* =========================================================================
  * Chat templates (Jinja2 native, enable_thinking support)
- * ======================================================================= */
+ * =========================================================================
+ *
+ * `ion7_chat_templates_priv` wraps the libcommon templates handle AND a
+ * memo of the most recent `common_chat_params` returned by
+ * `common_chat_templates_apply`. Storing that memo lets `ion7_chat_parse`
+ * later call `common_chat_parse` with the correct PEG parser instead of
+ * the pure-content default — which is what lets us extract tool calls
+ * from Mistral / Qwen / Hermes templates without the caller having to
+ * know which family the model belongs to.
+ *
+ * The memo carries everything `common_chat_parser_params` needs :
+ *   - `format`            — selected `common_chat_format` enum value.
+ *   - `generation_prompt` — pinned by some templates that prepend a tag.
+ *   - `parser`            — serialised PEG arena (a flat string).
+ *
+ * Each `_apply` call overwrites the memo. That is fine for the single
+ * "apply → parse" cycle ion7-llm runs per turn ; if a future caller
+ * needs to apply once and parse many times across different inputs, a
+ * dedicated `ion7_chat_session_t` opaque could be added later without
+ * breaking this API.
+ */
+struct ion7_chat_templates_priv {
+    common_chat_templates * tmpls;       /* owned */
+    common_chat_params      last_apply;  /* refreshed on every _apply */
+    bool                    has_apply;
+};
 
 extern "C"
 ion7_chat_templates_t* ion7_chat_templates_init(
     const struct llama_model* model,
     const char*               tmpl_override)
 {
-    auto ptr = common_chat_templates_init(
+    auto raw = common_chat_templates_init(
         model,
         tmpl_override ? tmpl_override : "",
         "",   /* bos_token: model default */
         "");  /* eos_token: model default */
-    return reinterpret_cast<ion7_chat_templates_t*>(ptr.release());
+    if (!raw) return nullptr;
+
+    auto * priv = new ion7_chat_templates_priv();
+    priv->tmpls     = raw.release();
+    priv->has_apply = false;
+    return reinterpret_cast<ion7_chat_templates_t*>(priv);
 }
 
 extern "C"
 void ion7_chat_templates_free(ion7_chat_templates_t* t)
 {
-    if (t) common_chat_templates_free(reinterpret_cast<common_chat_templates*>(t));
+    if (!t) return;
+    auto * priv = reinterpret_cast<ion7_chat_templates_priv*>(t);
+    if (priv->tmpls) common_chat_templates_free(priv->tmpls);
+    delete priv;
 }
 
 extern "C"
 int ion7_chat_templates_support_thinking(const ion7_chat_templates_t* t)
 {
     if (!t) return 0;
-    return common_chat_templates_support_enable_thinking(
-        reinterpret_cast<const common_chat_templates*>(t)) ? 1 : 0;
+    auto * priv = reinterpret_cast<const ion7_chat_templates_priv*>(t);
+    return common_chat_templates_support_enable_thinking(priv->tmpls) ? 1 : 0;
 }
 
 extern "C"
@@ -74,6 +107,7 @@ int32_t ion7_chat_templates_apply(
     int32_t                buf_len)
 {
     if (!t) return -1;
+    auto * priv = reinterpret_cast<ion7_chat_templates_priv*>(t);
 
     common_chat_templates_inputs inputs;
     inputs.add_generation_prompt = (bool)add_ass;
@@ -93,9 +127,7 @@ int32_t ion7_chat_templates_apply(
 
     common_chat_params result;
     try {
-        result = common_chat_templates_apply(
-            reinterpret_cast<const common_chat_templates*>(t),
-            inputs);
+        result = common_chat_templates_apply(priv->tmpls, inputs);
     } catch (const std::exception&) {
         return -2;
     } catch (...) {
@@ -110,6 +142,14 @@ int32_t ion7_chat_templates_apply(
     if (buf && buf_len >= needed) {
         std::memcpy(buf, result.prompt.c_str(), (size_t)needed);
     }
+
+    /* Memo the params for the next _chat_parse call. We move the result
+     * to avoid copying the (potentially large) serialised PEG parser
+     * string and the prompt itself (the prompt is already in `buf`).
+     * `has_apply` flips on the first successful render. */
+    priv->last_apply = std::move(result);
+    priv->has_apply  = true;
+
     return needed;
 }
 
@@ -128,12 +168,32 @@ int ion7_chat_parse(
     int*    out_has_tools)
 {
     if (!t || !text) return -1;
+    auto * priv = reinterpret_cast<ion7_chat_templates_priv*>(t);
 
     common_chat_parser_params pparams;
     pparams.parse_tool_calls = true;
     pparams.reasoning_format = (enable_thinking != 0)
         ? COMMON_REASONING_FORMAT_AUTO
         : COMMON_REASONING_FORMAT_NONE;
+
+    /* Promote the memoised render's metadata into the parser params.
+     * Without this, libcommon falls back to the pure-content PEG parser
+     * and tool calls go undetected for templates whose tool-call
+     * envelope is non-default (Mistral / Qwen / Hermes / …). */
+    if (priv->has_apply) {
+        pparams.format            = priv->last_apply.format;
+        pparams.generation_prompt = priv->last_apply.generation_prompt;
+        if (!priv->last_apply.parser.empty()) {
+            try {
+                pparams.parser.load(priv->last_apply.parser);
+            } catch (...) {
+                /* Parser deserialisation failed — fall back to the
+                 * default content-only behaviour rather than aborting
+                 * the whole parse. */
+                pparams.parser = {};
+            }
+        }
+    }
 
     common_chat_msg msg;
     try {
