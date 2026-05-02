@@ -29,7 +29,12 @@ jobs:
             os:        ubuntu-latest
             backend:   vulkan
             cmake_flags: "-DGGML_CUDA=OFF -DGGML_VULKAN=ON"
-            apt_extra:   "libvulkan-dev glslang-tools spirv-headers"
+            # glslc lives in its own package on Ubuntu 22.04+ ; the
+            # `glslang-tools` package only ships glslangValidator,
+            # which llama.cpp's CMake does not look for. Both are
+            # included here so a wider set of llama.cpp checkpoints
+            # builds without re-running CMake configure.
+            apt_extra:   "libvulkan-dev glslc glslang-tools spirv-headers"
 
           # Linux aarch64
           - target:    linux-aarch64-cpu
