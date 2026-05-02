@@ -38,7 +38,7 @@ ffi.cdef [[
                       uint32_t  n_ctx_min);
 
   /* ── Chat templates (Jinja2) ──────────────────────────────────────── */
-  typedef struct common_chat_templates ion7_chat_templates_t;
+  typedef struct ion7_chat_templates_priv ion7_chat_templates_t;
 
   ion7_chat_templates_t* ion7_chat_templates_init(
       const struct llama_model* model,

@@ -100,8 +100,22 @@ int ion7_params_fit(const char* path,
  * Chat Templates (Jinja2 native)
  * ======================================================================= */
 
-/** Opaque handle to a `common_chat_templates` instance. */
-typedef struct common_chat_templates ion7_chat_templates_t;
+/**
+ * Opaque handle to the chat-template stack.
+ *
+ * Internally wraps a `common_chat_templates *` AND a memo of the most
+ * recent `common_chat_params` returned by `common_chat_templates_apply`.
+ *
+ * `ion7_chat_templates_apply` snapshots the resulting `common_chat_params`
+ * (format + generation_prompt + serialised PEG parser arena) on every
+ * call, and `ion7_chat_parse` consumes that snapshot to feed
+ * `common_chat_parser_params` correctly. That is what lets templates
+ * with non-default tool-call formats (Mistral `[TOOL_CALLS]…[ARGS]…`,
+ * Qwen `<|tool_call_begin|>`, Hermes `<tool_call>…</tool_call>`) be
+ * parsed back into structured tool_calls without the caller having
+ * to know which family the model belongs to.
+ */
+typedef struct ion7_chat_templates_priv ion7_chat_templates_t;
 
 /**
  * Initialise chat templates from a loaded model.
