@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15">
+  <style>
+    .box      { fill: none; stroke: #6b7280; stroke-width: 1.6; rx: 10; ry: 10; }
+    .header   { fill: #fef3c7; stroke: #d97706; }
+    .tu       { fill: #f0fdf4; stroke: #16a34a; }
+    .common   { fill: #fce7f3; stroke: #db2777; }
+    .label    { fill: #1f2937; font-weight: 700; font-size: 16px; }
+    .file     { fill: #374151; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 13px; font-weight: 600; }
+    .sub      { fill: #4b5563; font-size: 13px; }
+    .title    { fill: #1f2937; font-weight: 700; font-size: 18px; }
+    .arrow    { stroke: #9ca3af; stroke-width: 1.5; fill: none; marker-end: url(#tip); }
+    @media (prefers-color-scheme: dark) {
+      .box    { stroke: #9ca3af; }
+      .header { fill: #422006; stroke: #fbbf24; }
+      .tu     { fill: #14532d; stroke: #4ade80; }
+      .common { fill: #500724; stroke: #f472b6; }
+      .label  { fill: #e5e7eb; }
+      .file   { fill: #d1d5db; }
+      .sub    { fill: #9ca3af; }
+      .title  { fill: #f3f4f6; }
+      .arrow  { stroke: #6b7280; }
+    }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">bridge/  —  the C++ shim that wraps libcommon</text>
+
+  <!-- ABI header at top -->
+  <rect class="box header" x="40" y="70" width="1120" height="80"/>
+  <text class="label" x="600" y="98" text-anchor="middle">ion7_bridge.h  +  bridge_internal.hpp</text>
+  <text class="sub"   x="600" y="122" text-anchor="middle">stable extern "C" surface · ~34 functions · primitive parameter types only</text>
+  <text class="sub"   x="600" y="140" text-anchor="middle">private inline helpers (ion7_safe_copy)  ·  consumed by ffi/bridge.lua hand-written cdef</text>
+
+  <!-- 5 translation units -->
+  <text class="title" x="40" y="190">Five translation units, one per libcommon feature group</text>
+
+  <rect class="box tu" x="40" y="210" width="220" height="200"/>
+  <text class="file"  x="150" y="238" text-anchor="middle">bridge_chat.cpp</text>
+  <text class="sub"   x="150" y="262" text-anchor="middle">— Jinja2 chat templates</text>
+  <text class="sub"   x="150" y="282" text-anchor="middle">— chat output parsing</text>
+  <text class="sub"   x="150" y="302" text-anchor="middle">— reasoning_budget</text>
+  <text class="sub"   x="150" y="322" text-anchor="middle">  sampler step</text>
+  <text class="sub"   x="150" y="362" text-anchor="middle">ion7_chat_templates_*</text>
+  <text class="sub"   x="150" y="380" text-anchor="middle">ion7_chat_parse</text>
+  <text class="sub"   x="150" y="398" text-anchor="middle">ion7_reasoning_budget_init</text>
+
+  <rect class="box tu" x="280" y="210" width="220" height="200"/>
+  <text class="file"  x="390" y="238" text-anchor="middle">bridge_sampling.cpp</text>
+  <text class="sub"   x="390" y="262" text-anchor="middle">— common_sampler</text>
+  <text class="sub"   x="390" y="282" text-anchor="middle">  (DRY · XTC · Mirostat ·</text>
+  <text class="sub"   x="390" y="302" text-anchor="middle">   grammar_lazy · …)</text>
+  <text class="sub"   x="390" y="322" text-anchor="middle">— common_speculative</text>
+  <text class="sub"   x="390" y="362" text-anchor="middle">ion7_csampler_*</text>
+  <text class="sub"   x="390" y="380" text-anchor="middle">ion7_speculative_init</text>
+  <text class="sub"   x="390" y="398" text-anchor="middle">ion7_speculative_draft / accept</text>
+
+  <rect class="box tu" x="520" y="210" width="220" height="200"/>
+  <text class="file"  x="630" y="238" text-anchor="middle">bridge_text.cpp</text>
+  <text class="sub"   x="630" y="262" text-anchor="middle">— JSON Schema → GBNF</text>
+  <text class="sub"   x="630" y="282" text-anchor="middle">— partial regex matcher</text>
+  <text class="sub"   x="630" y="302" text-anchor="middle">— JSON validate /</text>
+  <text class="sub"   x="630" y="322" text-anchor="middle">  format / merge</text>
+  <text class="sub"   x="630" y="362" text-anchor="middle">ion7_json_schema_to_grammar</text>
+  <text class="sub"   x="630" y="380" text-anchor="middle">ion7_regex_*</text>
+  <text class="sub"   x="630" y="398" text-anchor="middle">ion7_json_validate / format / merge</text>
+
+  <rect class="box tu" x="760" y="210" width="220" height="200"/>
+  <text class="file"  x="870" y="238" text-anchor="middle">bridge_training.cpp</text>
+  <text class="sub"   x="870" y="262" text-anchor="middle">— llama_opt</text>
+  <text class="sub"   x="870" y="282" text-anchor="middle">— common_opt_dataset_init</text>
+  <text class="sub"   x="870" y="302" text-anchor="middle">— constant-LR callback</text>
+  <text class="sub"   x="870" y="322" text-anchor="middle">  (forward / backward)</text>
+  <text class="sub"   x="870" y="362" text-anchor="middle">ion7_opt_init / free</text>
+  <text class="sub"   x="870" y="380" text-anchor="middle">ion7_opt_dataset_create</text>
+  <text class="sub"   x="870" y="398" text-anchor="middle">ion7_opt_epoch</text>
+
+  <rect class="box tu" x="1000" y="210" width="160" height="200"/>
+  <text class="file"  x="1080" y="238" text-anchor="middle">bridge_fit.cpp</text>
+  <text class="sub"   x="1080" y="262" text-anchor="middle">— common_fit_params</text>
+  <text class="sub"   x="1080" y="282" text-anchor="middle">  (VRAM auto-fit)</text>
+  <text class="sub"   x="1080" y="302" text-anchor="middle">— version string</text>
+  <text class="sub"   x="1080" y="362" text-anchor="middle">ion7_params_fit</text>
+  <text class="sub"   x="1080" y="380" text-anchor="middle">ion7_bridge_version</text>
+
+  <!-- Arrows from header to TUs (showing they all include the same header) -->
+  <path class="arrow" d="M 150 150 L 150 208"/>
+  <path class="arrow" d="M 390 150 L 390 208"/>
+  <path class="arrow" d="M 630 150 L 630 208"/>
+  <path class="arrow" d="M 870 150 L 870 208"/>
+  <path class="arrow" d="M 1080 150 L 1080 208"/>
+
+  <!-- All TUs link against libcommon -->
+  <text class="title" x="40" y="470">All five link against libcommon (the C++ helper layer of llama.cpp)</text>
+
+  <rect class="box common" x="40" y="500" width="1120" height="120"/>
+  <text class="label" x="600" y="535" text-anchor="middle">vendor/llama.cpp/common/  +  vendor/  (nlohmann/json)</text>
+  <text class="sub"   x="600" y="562" text-anchor="middle">chat.cpp · sampling.cpp · speculative.cpp · json_schema_to_grammar.cpp · regex_partial.cpp</text>
+  <text class="sub"   x="600" y="582" text-anchor="middle">opt.cpp · fit.cpp · common.cpp  ·  nlohmann/json.hpp  ·  base64.hpp</text>
+  <text class="sub"   x="600" y="606" text-anchor="middle">ion7_bridge.so links shared : libllama · libllama-common (or libcommon.a static fallback)</text>
+
+  <path class="arrow" d="M 150 410 L 150 498"/>
+  <path class="arrow" d="M 390 410 L 390 498"/>
+  <path class="arrow" d="M 630 410 L 630 498"/>
+  <path class="arrow" d="M 870 410 L 870 498"/>
+  <path class="arrow" d="M 1080 410 L 1080 498"/>
+
+  <!-- RPATH note at bottom -->
+  <text class="title" x="40" y="660">Linking</text>
+  <text class="sub"   x="40" y="685">Default build  bakes  -Wl,-rpath,$LIB_DIR  (absolute) — convenient for dev.</text>
+  <text class="sub"   x="40" y="705">ION7_RELEASE=1  bakes  -Wl,-rpath,$ORIGIN  (Linux) /  @loader_path  (macOS) — relocatable, used by every release tarball.</text>
+</svg>

@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 880" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15">
+  <style>
+    .box      { fill: none; stroke: #6b7280; stroke-width: 1.6; rx: 10; ry: 10; }
+    .root     { fill: #eef2ff; stroke: #4f46e5; }
+    .class    { fill: #f0fdf4; stroke: #16a34a; }
+    .util     { fill: #fef3c7; stroke: #d97706; }
+    .ffi      { fill: #fce7f3; stroke: #db2777; }
+    .label    { fill: #1f2937; font-weight: 700; font-size: 16px; }
+    .file     { fill: #374151; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', 'Roboto Mono', monospace; font-size: 13px; }
+    .sub      { fill: #4b5563; font-size: 13px; }
+    .header   { fill: #1f2937; font-weight: 700; font-size: 18px; }
+    .arrow    { stroke: #9ca3af; stroke-width: 1.4; fill: none; }
+    @media (prefers-color-scheme: dark) {
+      .box   { stroke: #9ca3af; }
+      .root  { fill: #1e1b4b; stroke: #818cf8; }
+      .class { fill: #14532d; stroke: #4ade80; }
+      .util  { fill: #422006; stroke: #fbbf24; }
+      .ffi   { fill: #500724; stroke: #f472b6; }
+      .label { fill: #e5e7eb; }
+      .file  { fill: #d1d5db; }
+      .sub   { fill: #9ca3af; }
+      .header{ fill: #f3f4f6; }
+      .arrow { stroke: #6b7280; }
+    }
+  </style>
+
+  <text class="header" x="40" y="40">src/ion7/core/  —  module organisation</text>
+
+  <!-- Root namespace -->
+  <rect class="box root" x="40" y="80" width="1120" height="80"/>
+  <text class="label" x="600" y="112" text-anchor="middle">init.lua</text>
+  <text class="sub"   x="600" y="135" text-anchor="middle">lazy-loading namespace · exposes Model, Context, Vocab, Sampler, CustomSampler, Threadpool, Speculative + utility re-exports</text>
+
+  <!-- Classes row 1 : Model and Context with their mixins -->
+  <text class="label" x="40" y="200">Class modules + mixins (each class is composed from focused sub-files)</text>
+
+  <!-- Model -->
+  <rect class="box class" x="40" y="220" width="540" height="200"/>
+  <text class="label" x="310" y="250" text-anchor="middle">Model</text>
+  <text class="file"  x="310" y="272" text-anchor="middle">model.lua  +  model/*.lua</text>
+  <line class="arrow" x1="60" y1="290" x2="560" y2="290"/>
+
+  <text class="file" x="60"  y="313">model/inspect.lua</text>
+  <text class="sub"  x="60"  y="332">  desc · n_params · n_layer · rope · capability flags</text>
+  <text class="file" x="60"  y="358">model/meta.lua</text>
+  <text class="sub"  x="60"  y="377">  GGUF metadata (key/value, bulk export, chat template)</text>
+  <text class="file" x="60"  y="403">model/lora.lua  ·  model/quantize.lua  ·  model/context_factory.lua</text>
+
+  <!-- Context -->
+  <rect class="box class" x="620" y="220" width="540" height="200"/>
+  <text class="label" x="890" y="250" text-anchor="middle">Context</text>
+  <text class="file"  x="890" y="272" text-anchor="middle">context.lua  +  context/*.lua</text>
+  <line class="arrow" x1="640" y1="290" x2="1140" y2="290"/>
+
+  <text class="file" x="640" y="313">context/decode.lua</text>
+  <text class="sub"  x="640" y="332">  decode · decode_single · decode_multi · encode</text>
+  <text class="file" x="640" y="358">context/kv.lua</text>
+  <text class="sub"  x="640" y="377">  clear · seq_rm · seq_cp · seq_keep · shift · div</text>
+  <text class="file" x="640" y="403">context/state.lua  ·  context/logits.lua  (logprob · entropy · embeddings · perf)</text>
+
+  <!-- Standalone classes row -->
+  <text class="label" x="40" y="460">Standalone classes</text>
+
+  <rect class="box class" x="40" y="480" width="280" height="100"/>
+  <text class="label" x="180" y="510" text-anchor="middle">Vocab</text>
+  <text class="file"  x="180" y="535" text-anchor="middle">vocab.lua</text>
+  <text class="sub"   x="180" y="558" text-anchor="middle">tokenize / detokenize / pieces</text>
+  <text class="sub"   x="180" y="572" text-anchor="middle">special tokens · Jinja2 templates</text>
+
+  <rect class="box class" x="340" y="480" width="280" height="100"/>
+  <text class="label" x="480" y="510" text-anchor="middle">Sampler · CSampler</text>
+  <text class="file"  x="480" y="535" text-anchor="middle">sampler.lua  +  sampler/common.lua</text>
+  <text class="sub"   x="480" y="558" text-anchor="middle">chain builder · 14 samplers</text>
+  <text class="sub"   x="480" y="572" text-anchor="middle">factories · introspection · clone</text>
+
+  <rect class="box class" x="640" y="480" width="240" height="100"/>
+  <text class="label" x="760" y="510" text-anchor="middle">CustomSampler</text>
+  <text class="file"  x="760" y="535" text-anchor="middle">custom_sampler.lua</text>
+  <text class="sub"   x="760" y="558" text-anchor="middle">Lua sampling via</text>
+  <text class="sub"   x="760" y="572" text-anchor="middle">ffi.cast trampolines</text>
+
+  <rect class="box class" x="900" y="480" width="260" height="100"/>
+  <text class="label" x="1030" y="510" text-anchor="middle">Threadpool · Speculative</text>
+  <text class="file"  x="1030" y="535" text-anchor="middle">threadpool.lua · speculative.lua</text>
+  <text class="sub"   x="1030" y="558" text-anchor="middle">shared CPU pool</text>
+  <text class="sub"   x="1030" y="572" text-anchor="middle">n-gram + draft + EAGLE3</text>
+
+  <!-- Utility row -->
+  <text class="label" x="40" y="620">Pure-Lua utilities  ·  no FFI to libllama</text>
+
+  <rect class="box util" x="40"  y="640" width="270" height="100"/>
+  <text class="label" x="175" y="670" text-anchor="middle">util.utf8</text>
+  <text class="file"  x="175" y="693" text-anchor="middle">util/utf8.lua</text>
+  <text class="sub"   x="175" y="715" text-anchor="middle">streaming-safe</text>
+  <text class="sub"   x="175" y="729" text-anchor="middle">codepoint completeness</text>
+
+  <rect class="box util" x="330" y="640" width="270" height="100"/>
+  <text class="label" x="465" y="670" text-anchor="middle">util.base64</text>
+  <text class="file"  x="465" y="693" text-anchor="middle">util/base64.lua</text>
+  <text class="sub"   x="465" y="715" text-anchor="middle">RFC 4648 encode/decode</text>
+  <text class="sub"   x="465" y="729" text-anchor="middle">NUL-safe</text>
+
+  <rect class="box util" x="620" y="640" width="270" height="100"/>
+  <text class="label" x="755" y="670" text-anchor="middle">util.log</text>
+  <text class="file"  x="755" y="693" text-anchor="middle">util/log.lua</text>
+  <text class="sub"   x="755" y="715" text-anchor="middle">ggml_log_set callback</text>
+  <text class="sub"   x="755" y="729" text-anchor="middle">level filter · file sink</text>
+
+  <rect class="box util" x="910" y="640" width="250" height="100"/>
+  <text class="label" x="1035" y="670" text-anchor="middle">util.tensor</text>
+  <text class="file"  x="1035" y="693" text-anchor="middle">util/tensor.lua</text>
+  <text class="sub"   x="1035" y="715" text-anchor="middle">ggml_tensor inspection</text>
+  <text class="sub"   x="1035" y="729" text-anchor="middle">F16/BF16 → F32 readout</text>
+
+  <!-- FFI row -->
+  <text class="label" x="40" y="775">FFI bindings  ·  the layer that crosses to native code</text>
+
+  <rect class="box ffi" x="40" y="795" width="540" height="70"/>
+  <text class="file"  x="60"  y="822">ffi/loader.lua</text>
+  <text class="sub"   x="60"  y="841">  resolves libllama / libggml at first use (env var → vendor → /usr/local → system)</text>
+  <text class="file" x="60" y="858">ffi/types.lua  ·  ffi/bridge.lua</text>
+
+  <rect class="box ffi" x="620" y="795" width="540" height="70"/>
+  <text class="file"  x="640" y="822">ffi/llama/*  ·  ffi/ggml/*  ·  ffi/gguf/*</text>
+  <text class="sub"   x="640" y="841">  auto-generated cdef + ffi.load per topic — model · context · vocab · sampler · state ·</text>
+  <text class="sub"   x="640" y="857">  kv_cache · batch · logits · perf · backend (regenerated on every llama.cpp bump)</text>
+</svg>

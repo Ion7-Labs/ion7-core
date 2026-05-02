@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15">
+  <style>
+    .box      { fill: none; stroke: #6b7280; stroke-width: 1.6; rx: 10; ry: 10; }
+    .step     { fill: #eef2ff; stroke: #4f46e5; }
+    .out      { fill: #f0fdf4; stroke: #16a34a; }
+    .conf     { fill: #fef3c7; stroke: #d97706; }
+    .release  { fill: #fce7f3; stroke: #db2777; }
+    .label    { fill: #1f2937; font-weight: 700; font-size: 16px; }
+    .file     { fill: #374151; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 13px; font-weight: 600; }
+    .sub      { fill: #4b5563; font-size: 13px; }
+    .title    { fill: #1f2937; font-weight: 700; font-size: 18px; }
+    .arrow    { stroke: #4b5563; stroke-width: 2; fill: none; marker-end: url(#tip); }
+    .arrow-conf { stroke: #d97706; stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+    .toggle   { fill: #db2777; font-size: 13px; font-style: italic; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      .box     { stroke: #9ca3af; }
+      .step    { fill: #1e1b4b; stroke: #818cf8; }
+      .out     { fill: #14532d; stroke: #4ade80; }
+      .conf    { fill: #422006; stroke: #fbbf24; }
+      .release { fill: #500724; stroke: #f472b6; }
+      .label   { fill: #e5e7eb; }
+      .file    { fill: #d1d5db; }
+      .sub     { fill: #9ca3af; }
+      .title   { fill: #f3f4f6; }
+      .arrow   { stroke: #d1d5db; }
+      .arrow-conf { stroke: #fbbf24; }
+      .toggle  { fill: #f472b6; }
+    }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">Build pipeline  ·  three steps, two rpath modes</text>
+
+  <!-- Configuration -->
+  <rect class="box conf" x="40" y="80" width="1120" height="80"/>
+  <text class="label" x="600" y="108" text-anchor="middle">local.mk  +  environment variables</text>
+  <text class="sub"   x="600" y="132" text-anchor="middle">LIB_DIR · COMMON_LIB_DIR · CUDA_ARCH · LLAMA_CMAKE_EXTRA · MARCH · ION7_RELEASE</text>
+  <text class="sub"   x="600" y="150" text-anchor="middle">forwarded down by the top-level Makefile to every sub-make recursion</text>
+
+  <!-- 3 build steps -->
+  <rect class="box step" x="40" y="200" width="340" height="160"/>
+  <text class="label" x="210" y="232" text-anchor="middle">make llama</text>
+  <text class="file"  x="210" y="260" text-anchor="middle">Makefile / vendor build</text>
+  <text class="sub"   x="210" y="288" text-anchor="middle">cmake -B vendor/llama.cpp/build</text>
+  <text class="sub"   x="210" y="306" text-anchor="middle">  -DBUILD_SHARED_LIBS=ON</text>
+  <text class="sub"   x="210" y="324" text-anchor="middle">  $(LLAMA_CMAKE_EXTRA)</text>
+  <text class="sub"   x="210" y="346" text-anchor="middle">cmake --build · -j$(nproc)</text>
+
+  <rect class="box step" x="430" y="200" width="340" height="160"/>
+  <text class="label" x="600" y="232" text-anchor="middle">make build</text>
+  <text class="file"  x="600" y="260" text-anchor="middle">Makefile + bridge/Makefile</text>
+  <text class="sub"   x="600" y="288" text-anchor="middle">recursion :</text>
+  <text class="sub"   x="600" y="306" text-anchor="middle">make -C bridge LIB_DIR=…</text>
+  <text class="sub"   x="600" y="324" text-anchor="middle">g++ -fPIC -std=c++17 -flto</text>
+  <text class="sub"   x="600" y="346" text-anchor="middle">links libllama + libcommon</text>
+
+  <rect class="box step" x="820" y="200" width="340" height="160"/>
+  <text class="label" x="990" y="232" text-anchor="middle">make tarball</text>
+  <text class="file"  x="990" y="260" text-anchor="middle">Makefile / packaging</text>
+  <text class="sub"   x="990" y="288" text-anchor="middle">implies ION7_RELEASE=1</text>
+  <text class="sub"   x="990" y="306" text-anchor="middle">stages bridge + libs + src/ +</text>
+  <text class="sub"   x="990" y="324" text-anchor="middle">bin/ion7-load.lua + docs</text>
+  <text class="sub"   x="990" y="346" text-anchor="middle">tar czf · sha256</text>
+
+  <!-- Outputs -->
+  <rect class="box out" x="40" y="410" width="340" height="120"/>
+  <text class="label" x="210" y="440" text-anchor="middle">Output artefacts</text>
+  <text class="file"  x="210" y="466" text-anchor="middle">vendor/llama.cpp/build/bin/</text>
+  <text class="sub"   x="210" y="486" text-anchor="middle">libllama.so.0 · libggml*.so.0</text>
+  <text class="sub"   x="210" y="504" text-anchor="middle">libllama-common.so.0</text>
+
+  <rect class="box out" x="430" y="410" width="340" height="120"/>
+  <text class="label" x="600" y="440" text-anchor="middle">Output artefact</text>
+  <text class="file"  x="600" y="466" text-anchor="middle">bridge/ion7_bridge.so</text>
+  <text class="sub"   x="600" y="486" text-anchor="middle">~350 KB · stripped on release</text>
+  <text class="sub"   x="600" y="504" text-anchor="middle">RUNPATH baked at link time</text>
+
+  <rect class="box out" x="820" y="410" width="340" height="120"/>
+  <text class="label" x="990" y="440" text-anchor="middle">Output artefact</text>
+  <text class="file"  x="990" y="466" text-anchor="middle">dist/ion7-core-VERSION-TARGET.tar.gz</text>
+  <text class="sub"   x="990" y="486" text-anchor="middle">~5 MB stripped (CPU build)</text>
+  <text class="sub"   x="990" y="504" text-anchor="middle">+ .sha256 alongside</text>
+
+  <!-- Arrows between the 3 steps -->
+  <path class="arrow" d="M 380 280 L 428 280"/>
+  <path class="arrow" d="M 770 280 L 818 280"/>
+
+  <!-- Configuration → all steps -->
+  <path class="arrow-conf" d="M 210 160 L 210 198"/>
+  <path class="arrow-conf" d="M 600 160 L 600 198"/>
+  <path class="arrow-conf" d="M 990 160 L 990 198"/>
+
+  <!-- ── RPATH section ──────────────────────────────────────────────────── -->
+  <text class="title" x="40" y="600">ION7_RELEASE  ·  switches the bridge's RUNPATH between two modes</text>
+
+  <rect class="box step" x="40" y="630" width="540" height="110"/>
+  <text class="label" x="310" y="658" text-anchor="middle">default (developer build)</text>
+  <text class="file"  x="310" y="684" text-anchor="middle">RUNPATH = $(LIB_DIR)</text>
+  <text class="sub"   x="310" y="708" text-anchor="middle">absolute path baked into ion7_bridge.so</text>
+  <text class="sub"   x="310" y="726" text-anchor="middle">finds vendor/llama.cpp/build/bin/lib*.so on this host</text>
+
+  <rect class="box release" x="620" y="630" width="540" height="110"/>
+  <text class="label" x="890" y="658" text-anchor="middle">ION7_RELEASE=1 (relocatable)</text>
+  <text class="file"  x="890" y="684" text-anchor="middle">RUNPATH = $ORIGIN  (Linux)  ·  @loader_path  (macOS)</text>
+  <text class="sub"   x="890" y="708" text-anchor="middle">looks for sibling libs in the directory of ion7_bridge.so</text>
+  <text class="sub"   x="890" y="726" text-anchor="middle">extract a release tarball anywhere — no LD_LIBRARY_PATH needed</text>
+</svg>

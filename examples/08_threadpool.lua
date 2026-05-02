@@ -1,145 +1,153 @@
 #!/usr/bin/env luajit
---- 08_threadpool.lua - Shared CPU threadpool across multiple contexts.
+--- @example examples.08_threadpool
+--- @author  ion7 / Ion7 Project Contributors
 ---
---- By default each context creates its own internal threadpool, which wastes
---- threads and memory when running multiple contexts simultaneously.
---- A shared Threadpool amortises thread creation and reduces contention.
+--- ════════════════════════════════════════════════════════════════════════
+--- 08 — Threadpool : shared CPU workers across multiple contexts
+--- ════════════════════════════════════════════════════════════════════════
 ---
---- Use case: serving multiple users, batch embedding, multi-sequence decoding.
+--- A `Threadpool` is a pool of OS-level worker threads that one or
+--- more `Context` instances can borrow at decode time. Without a
+--- shared pool, llama.cpp spins up a fresh internal pool per context
+--- — wasteful when several contexts run side by side.
 ---
---- Usage:
+--- Important sizing rule : the pool size MUST equal both `n_threads`
+--- AND `n_threads_batch` of every attached context. A mismatched
+--- size segfaults inside the CPU backend's worker dispatch — there
+--- is no graceful failure for it.
+---
 ---   ION7_MODEL=/path/to/model.gguf luajit examples/08_threadpool.lua
 
 package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
 
-local ion7 = require "ion7.core"
+local MODEL = os.getenv("ION7_MODEL") or
+    error("Set ION7_MODEL=/path/to/model.gguf", 0)
 
+local ion7 = require "ion7.core"
 ion7.init({ log_level = 0 })
 
-local MODEL = assert(os.getenv("ION7_MODEL"), "Set ION7_MODEL=/path/to/model.gguf")
 local fit   = ion7.Model.fit_params(MODEL)
-local model  = ion7.Model.load(MODEL, { n_gpu_layers = fit and fit.n_gpu_layers or 0 })
-local vocab  = model:vocab()
+local model = ion7.Model.load(MODEL, {
+    n_gpu_layers = fit and fit.n_gpu_layers or 0,
+})
+local vocab = model:vocab()
 
-local N_THREADS = 4   -- adjust to your CPU
+local POOL_SIZE = 4
+local sampler   = ion7.Sampler.chain():top_k(1):dist(42):build()
 
--- ── 1. Basic shared threadpool ────────────────────────────────────────────────
-
-io.write("\n[1. Shared threadpool across two contexts]\n")
-
--- One threadpool for prefill (batched), one for generation (sequential)
-local tp_prefill = ion7.Threadpool.new(N_THREADS)
-local tp_gen     = ion7.Threadpool.new(N_THREADS)
-
-io.write(string.format("  Created: tp_prefill(%d threads)  tp_gen(%d threads)\n",
-    tp_prefill:n_threads(), tp_gen:n_threads()))
-
-local ctx1 = model:context({ n_ctx = 512, n_threads = N_THREADS })
-local ctx2 = model:context({ n_ctx = 512, n_threads = N_THREADS })
-
--- Attach the shared pool - both contexts use the same OS threads
-ctx1:attach_threadpool(tp_prefill, tp_gen)
-ctx2:attach_threadpool(tp_prefill, tp_gen)
-io.write("  Both contexts attached to shared pool\n")
-
--- Simple generation helper
-local sampler = ion7.Sampler.chain():top_k(1):dist(42):build(vocab)
-
-local function quick_gen(ctx, prompt, max)
-    local msgs    = { { role = "user", content = prompt } }
-    local fmt     = vocab:apply_template(msgs, true)
-    local toks, n = vocab:tokenize(fmt, false, true)
+--- Quick generation helper. Decodes the prompt then samples up to
+--- `max_gen` tokens, returning the trimmed reply.
+local function quick(ctx, user_text, max_gen)
+    local prompt   = vocab:apply_template(
+        { { role = "user", content = user_text } }, true, -1)
+    local toks, n  = vocab:tokenize(prompt, false, true)
     ctx:kv_clear()
-    ctx:decode(toks, n, 0, 0)
+    ctx:decode(toks, n)
     sampler:reset()
-    local parts = {}
-    for _ = 1, max do
+    local pieces = {}
+    for _ = 1, max_gen do
         local tok = sampler:sample(ctx:ptr(), -1)
         if vocab:is_eog(tok) then break end
-        parts[#parts+1] = vocab:piece(tok, true)
-        ctx:decode_single(tok, 0)
+        pieces[#pieces + 1] = vocab:piece(tok)
+        ctx:decode_single(tok)
     end
-    return table.concat(parts):match("^%s*(.-)%s*$")
+    return (table.concat(pieces):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
-io.write("  ctx1: " .. quick_gen(ctx1, "What is 2+2?", 20) .. "\n")
-io.write("  ctx2: " .. quick_gen(ctx2, "What is 3+3?", 20) .. "\n")
+-- ════════════════════════════════════════════════════════════════════════
+-- 1. Two contexts attached to one shared pool
+-- ════════════════════════════════════════════════════════════════════════
 
--- Detach before freeing pool
-ctx1:detach_threadpool()
-ctx2:detach_threadpool()
+print("\n[1] Two contexts sharing one threadpool of " .. POOL_SIZE .. " workers")
 
--- ── 2. Pause / resume for priority control ────────────────────────────────────
--- Useful when you want to dedicate CPU to a high-priority task temporarily.
+local tp = ion7.Threadpool.new(POOL_SIZE)
+print("  pool created : " .. tp:n_threads() .. " worker threads")
 
-io.write("\n[2. Pause / resume for priority]\n")
+local ctx_a = model:context({
+    n_ctx = 1024, n_threads = POOL_SIZE, n_threads_batch = POOL_SIZE,
+})
+local ctx_b = model:context({
+    n_ctx = 1024, n_threads = POOL_SIZE, n_threads_batch = POOL_SIZE,
+})
+ctx_a:attach_threadpool(tp)
+ctx_b:attach_threadpool(tp)
 
-local tp = ion7.Threadpool.new(N_THREADS)
-local ctx = model:context({ n_ctx = 256 })
+print("  ctx A : " .. quick(ctx_a, "What is 2 + 2 ?", 24):gsub("\n", " "))
+print("  ctx B : " .. quick(ctx_b, "What is 3 + 3 ?", 24):gsub("\n", " "))
+
+ctx_a:detach_threadpool() ; ctx_b:detach_threadpool()
+ctx_a:free() ; ctx_b:free()
+
+-- ════════════════════════════════════════════════════════════════════════
+-- 2. Pause / resume for cooperative CPU sharing
+-- ════════════════════════════════════════════════════════════════════════
+--
+-- Pausing the pool puts the workers to sleep so an unrelated CPU-
+-- bound task on the same machine gets the cores for itself. Resuming
+-- wakes them back up. A bit niche, but useful for dropping inference
+-- priority while a heavy CPU job runs nearby.
+
+print("\n[2] Pause / resume the pool")
+
+local ctx = model:context({
+    n_ctx = 1024, n_threads = POOL_SIZE, n_threads_batch = POOL_SIZE,
+})
 ctx:attach_threadpool(tp)
 
-io.write("  Running with shared pool...\n")
-quick_gen(ctx, "Say hello.", 10)
+print("  reply 1 : " .. quick(ctx, "Say hi.", 10):gsub("\n", " "))
 
--- Pause: workers go idle, reducing CPU interference with other processes
-tp:pause()
-io.write("  Pool paused (workers idle)\n")
+tp:pause()  ; print("  pool paused")
+-- ... another CPU-heavy task could run here without thread contention ...
+tp:resume() ; print("  pool resumed")
 
--- Do some other work here (e.g. heavy embedding computation)
+print("  reply 2 : " .. quick(ctx, "Say bye.", 10):gsub("\n", " "))
 
--- Resume when ready for the next inference
-tp:resume()
-io.write("  Pool resumed\n")
+ctx:detach_threadpool() ; ctx:free()
 
-quick_gen(ctx, "Say goodbye.", 10)
+-- ════════════════════════════════════════════════════════════════════════
+-- 3. Prefill latency : shared pool vs per-context default
+-- ════════════════════════════════════════════════════════════════════════
+--
+-- llama.cpp creates its own internal pool when none is attached. The
+-- difference per single decode is small ; the win shows up when you
+-- run many contexts back to back (each default pool is its own
+-- pthread_create cascade).
 
-ctx:detach_threadpool()
-ctx:free()
+print("\n[3] Prefill timing — shared pool vs default pool")
 
--- ── 3. Performance comparison ─────────────────────────────────────────────────
+local prompt   = vocab:apply_template(
+    { { role = "user", content = "List five facts about LuaJIT." } },
+    true, -1)
+local toks, n  = vocab:tokenize(prompt, false, true)
 
-io.write("\n[3. Shared pool vs default (per-context) pool]\n")
+local function average_prefill_ms(ctx_inst, n_runs)
+    local t0 = ion7.time_us()
+    for _ = 1, n_runs do
+        ctx_inst:kv_clear()
+        ctx_inst:decode(toks, n)
+    end
+    return (ion7.time_us() - t0) / 1000 / n_runs
+end
 
 local N_RUNS = 5
-local prompt  = "List 5 facts about LuaJIT:"
-local msgs    = { { role = "user", content = prompt } }
-local fmt     = vocab:apply_template(msgs, true)
-local toks, n = vocab:tokenize(fmt, false, true)
 
--- With shared pool
-local ctx_shared = model:context({ n_ctx = 512 })
-local tp_shared  = ion7.Threadpool.new(N_THREADS)
-ctx_shared:attach_threadpool(tp_shared)
+local ctx_shared = model:context({
+    n_ctx = 1024, n_threads = POOL_SIZE, n_threads_batch = POOL_SIZE,
+})
+ctx_shared:attach_threadpool(tp)
+local ms_shared = average_prefill_ms(ctx_shared, N_RUNS)
+ctx_shared:detach_threadpool() ; ctx_shared:free()
 
-local t0 = ion7.time_us()
-for _ = 1, N_RUNS do
-    ctx_shared:kv_clear()
-    ctx_shared:decode(toks, n, 0, 0)
-end
-local shared_ms = (ion7.time_us() - t0) / 1000 / N_RUNS
-ctx_shared:detach_threadpool()
-ctx_shared:free()
-tp_shared:free()
-
--- Without shared pool (default internal threadpool)
-local ctx_default = model:context({ n_ctx = 512 })
-
-t0 = ion7.time_us()
-for _ = 1, N_RUNS do
-    ctx_default:kv_clear()
-    ctx_default:decode(toks, n, 0, 0)
-end
-local default_ms = (ion7.time_us() - t0) / 1000 / N_RUNS
+local ctx_default = model:context({
+    n_ctx = 1024, n_threads = POOL_SIZE, n_threads_batch = POOL_SIZE,
+})
+local ms_default = average_prefill_ms(ctx_default, N_RUNS)
 ctx_default:free()
 
-io.write(string.format("  Shared pool:   %.1f ms/prefill (avg %d runs)\n", shared_ms, N_RUNS))
-io.write(string.format("  Default pool:  %.1f ms/prefill (avg %d runs)\n", default_ms, N_RUNS))
-io.write(string.format("  Difference:    %+.1f ms\n", shared_ms - default_ms))
-io.write("  (difference is typically small for single context; benefit shows at scale)\n")
+print(string.format("  shared pool   : %.1f ms/prefill (avg of %d)",
+    ms_shared, N_RUNS))
+print(string.format("  default pool  : %.1f ms/prefill (avg of %d)",
+    ms_default, N_RUNS))
 
--- Cleanup
-tp_prefill:free(); tp_gen:free()
-ctx1:free(); ctx2:free()
-sampler:free()
-
+sampler:free() ; tp:free() ; model:free()
 ion7.shutdown()

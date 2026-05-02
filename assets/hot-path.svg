@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15">
+  <style>
+    .box       { fill: none; stroke: #6b7280; stroke-width: 1.6; rx: 10; ry: 10; }
+    .lua       { fill: #eef2ff; stroke: #4f46e5; }
+    .ffi       { fill: #fce7f3; stroke: #db2777; }
+    .native    { fill: #f0fdf4; stroke: #16a34a; }
+    .cache     { fill: #fef3c7; stroke: #d97706; }
+    .label     { fill: #1f2937; font-weight: 700; font-size: 16px; }
+    .file      { fill: #374151; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 13px; }
+    .sub       { fill: #4b5563; font-size: 13px; }
+    .title     { fill: #1f2937; font-weight: 700; font-size: 18px; }
+    .step      { fill: #1f2937; font-weight: 700; font-size: 22px; }
+    .arrow     { stroke: #4b5563; stroke-width: 2; fill: none; marker-end: url(#tip); }
+    .arrow-back{ stroke: #9ca3af; stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; marker-end: url(#tip-light); }
+    .tag       { fill: #16a34a; font-size: 13px; font-style: italic; font-weight: 600; }
+    .ffi-tag   { fill: #db2777; font-size: 13px; font-style: italic; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      .box       { stroke: #9ca3af; }
+      .lua       { fill: #1e1b4b; stroke: #818cf8; }
+      .ffi       { fill: #500724; stroke: #f472b6; }
+      .native    { fill: #14532d; stroke: #4ade80; }
+      .cache     { fill: #422006; stroke: #fbbf24; }
+      .label     { fill: #e5e7eb; }
+      .file      { fill: #d1d5db; }
+      .sub       { fill: #9ca3af; }
+      .title     { fill: #f3f4f6; }
+      .step      { fill: #f3f4f6; }
+      .arrow     { stroke: #d1d5db; }
+      .arrow-back{ stroke: #6b7280; }
+      .tag       { fill: #4ade80; }
+      .ffi-tag   { fill: #f472b6; }
+    }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563"/>
+    </marker>
+    <marker id="tip-light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">Per-token generation loop  ·  what crosses FFI vs what stays in Lua</text>
+
+  <!-- Step 1 : sample -->
+  <text class="step" x="80" y="100">①</text>
+  <rect class="box lua" x="120" y="80" width="320" height="100"/>
+  <text class="label" x="280" y="110" text-anchor="middle">sampler:sample(ctx:ptr(), -1)</text>
+  <text class="sub"   x="280" y="135" text-anchor="middle">Lua-side method call</text>
+  <text class="sub"   x="280" y="155" text-anchor="middle">forwards a single FFI invocation to llama.cpp</text>
+
+  <path class="arrow" d="M 440 130 L 568 130"/>
+  <text class="ffi-tag" x="504" y="118" text-anchor="middle">FFI ▶</text>
+
+  <rect class="box native" x="570" y="80" width="320" height="100"/>
+  <text class="label" x="730" y="110" text-anchor="middle">llama_sampler_sample</text>
+  <text class="sub"   x="730" y="135" text-anchor="middle">walks the chain ; auto-accepts on chains</text>
+  <text class="sub"   x="730" y="155" text-anchor="middle">returns a token id (int32)</text>
+
+  <path class="arrow-back" d="M 890 160 L 1010 160"/>
+  <rect class="box lua" x="1010" y="100" width="160" height="60"/>
+  <text class="label"   x="1090" y="135" text-anchor="middle">tok</text>
+
+  <!-- Step 2 : EOG check -->
+  <text class="step" x="80" y="240">②</text>
+  <rect class="box lua" x="120" y="220" width="320" height="80"/>
+  <text class="label" x="280" y="248" text-anchor="middle">vocab:is_eog(tok)</text>
+  <text class="sub"   x="280" y="270" text-anchor="middle">Lua-side : direct field read on the cached vocab</text>
+  <text class="sub"   x="280" y="288" text-anchor="middle">FFI roundtrip — but cheap (single int comparison)</text>
+
+  <!-- Step 3 : piece -->
+  <text class="step" x="80" y="360">③</text>
+  <rect class="box lua" x="120" y="340" width="320" height="100"/>
+  <text class="label" x="280" y="370" text-anchor="middle">vocab:piece(tok)</text>
+  <text class="sub"   x="280" y="395" text-anchor="middle">memoised — second call returns the cached</text>
+  <text class="sub"   x="280" y="412" text-anchor="middle">Lua string without crossing FFI</text>
+
+  <path class="arrow" d="M 440 390 L 568 390"/>
+  <rect class="box cache" x="570" y="340" width="320" height="100"/>
+  <text class="label" x="730" y="370" text-anchor="middle">_piece_cache[tok]</text>
+  <text class="sub"   x="730" y="395" text-anchor="middle">Lua table of strings · _piece_buf scratch</text>
+  <text class="sub"   x="730" y="412" text-anchor="middle">FFI ONLY on first occurrence of a token id</text>
+
+  <!-- Step 4 : decode_single (the FFI-heavy one) -->
+  <text class="step" x="80" y="500">④</text>
+  <rect class="box lua" x="120" y="480" width="320" height="100"/>
+  <text class="label" x="280" y="510" text-anchor="middle">ctx:decode_single(tok)</text>
+  <text class="sub"   x="280" y="535" text-anchor="middle">writes 4 fields into the pre-allocated batch</text>
+  <text class="sub"   x="280" y="555" text-anchor="middle">no malloc · no realloc · n_seq_id stays at 1</text>
+
+  <path class="arrow" d="M 440 530 L 568 530"/>
+  <text class="ffi-tag" x="504" y="518" text-anchor="middle">FFI ▶</text>
+
+  <rect class="box native" x="570" y="480" width="320" height="100"/>
+  <text class="label" x="730" y="510" text-anchor="middle">llama_decode</text>
+  <text class="sub"   x="730" y="535" text-anchor="middle">forward pass · GPU dispatch</text>
+  <text class="sub"   x="730" y="555" text-anchor="middle">writes new logits at batch position 0</text>
+
+  <!-- Pre-allocated batch (cached state) -->
+  <rect class="box cache" x="940" y="480" width="220" height="100"/>
+  <text class="label" x="1050" y="510" text-anchor="middle">_decode_batch</text>
+  <text class="sub"   x="1050" y="535" text-anchor="middle">struct llama_batch</text>
+  <text class="sub"   x="1050" y="555" text-anchor="middle">n_batch slots · reused</text>
+  <path class="arrow-back" d="M 940 530 L 892 530"/>
+
+  <!-- Footer summary -->
+  <rect class="box ffi" x="40" y="620" width="1120" height="120"/>
+  <text class="title" x="60" y="650">Inner-loop tally  (per token)</text>
+  <text class="sub"   x="60" y="678">2 FFI crossings  :  llama_sampler_sample  +  llama_decode</text>
+  <text class="sub"   x="60" y="697">0 mallocs  :  the decode batch is pre-allocated and reused ;  cdata typeofs are cached at module load</text>
+  <text class="sub"   x="60" y="716">1 cached read  :  vocab:piece(tok) returns the memoised Lua string for any tok seen earlier in the run</text>
+  <text class="sub"   x="60" y="735">Net  :  the inner loop matches what llama-cli does in C++,  plus the cost of a few JIT-compiled Lua method calls.</text>
+</svg>

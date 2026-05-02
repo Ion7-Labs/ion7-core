@@ -1,28 +1,44 @@
 #pragma once
 /*
- * bridge_internal.hpp - private header shared between bridge_*.cpp files.
+ * bridge_internal.hpp - Private helpers shared between bridge_*.cpp files.
  *
- * NOT part of the public API (not included by ion7_bridge.h).
- * Used only by bridge_core.cpp, bridge_utils.cpp, etc. to share:
- *   - the 3 log globals
- *   - the unified log callback declaration
- *   - the ctx_mem() inline helper
+ * Copyright (C) 2026 Ion7 Project Contributors
+ * SPDX-License-Identifier: MIT
  *
- * Do not include this from Lua-facing code or external consumers.
+ * NOT part of the public API. Do not include from any external consumer
+ * (Lua, downstream C++ libraries, etc.). Lives here only to keep the
+ * implementation files free of duplicated tiny utilities.
  */
 
-#include "llama.h"
+#include <cstring>
+#include <cstdint>
+#include <string>
 
-/* ── Log globals (defined once in bridge_core.cpp) ─────────────────────── */
-extern int   g_log_level;
-extern FILE* g_log_file;
-extern int   g_log_timestamps;
-
-/* ── Unified log callback (defined in bridge_core.cpp) ─────────────────── */
-void ion7_log_dispatch(enum ggml_log_level level, const char* text, void* ud);
-
-/* ── KV cache memory accessor ───────────────────────────────────────────── */
-static inline llama_memory_t ctx_mem(struct llama_context* ctx)
+/**
+ * Copy a `std::string` into a caller-provided C buffer with explicit
+ * truncation handling. Used by parse-style bridge functions that emit
+ * strings of unknown size into fixed-capacity buffers.
+ *
+ * The destination is always NUL-terminated (provided `cap > 0`).
+ *
+ * @param  src        Source string.
+ * @param  dst        Destination buffer (caller-owned).
+ * @param  cap        Capacity of `dst` in bytes (including NUL slot).
+ * @param  truncated  Out-flag set to 1 if `src` was longer than `cap-1`.
+ *                    Existing value is preserved on no-truncation, so the
+ *                    caller can OR-accumulate across multiple calls.
+ */
+inline void ion7_safe_copy(const std::string& src,
+                           char*              dst,
+                           int32_t            cap,
+                           int*               truncated)
 {
-    return llama_get_memory(ctx);
+    if (!dst || cap <= 0) return;
+    size_t n = src.size();
+    if ((int32_t)n >= cap) {
+        n = (size_t)(cap - 1);
+        if (truncated) *truncated = 1;
+    }
+    std::memcpy(dst, src.c_str(), n);
+    dst[n] = '\0';
 }
