@@ -11,44 +11,32 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  LLAMA_CPP_REF: master  # always use latest llama.cpp
-
 jobs:
   # ── 0a. Bridge syntax-check (fast, no llama.cpp build needed) ─────────────
-  # Catches libcommon API drift in seconds rather than waiting for the full
-  # build matrix. Runs in parallel with everything else.
+  # Catches libcommon API drift in seconds rather than waiting for the
+  # full build matrix. Uses the headers from the pinned submodule so the
+  # check tracks the exact upstream the bridge will actually link
+  # against — not floating master.
   syntax-check-bridge:
     name: Syntax-check bridge .cpp
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install clang
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y clang
 
-      - name: Cache llama.cpp source (headers only — no build)
-        id: cache-src
-        uses: actions/cache@v4
-        with:
-          path: /tmp/llama-src
-          key: llama-${{ env.LLAMA_CPP_REF }}-src-only
-
-      - name: Clone llama.cpp source
-        if: steps.cache-src.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch ${{ env.LLAMA_CPP_REF }} \
-            https://github.com/ggerganov/llama.cpp /tmp/llama-src
-
       - name: Syntax-check every bridge .cpp
         run: |
           cd bridge
-          INC="-isystem /tmp/llama-src/include \
-               -isystem /tmp/llama-src/ggml/include \
-               -isystem /tmp/llama-src/common \
-               -isystem /tmp/llama-src/vendor"
+          INC="-isystem ../vendor/llama.cpp/include \
+               -isystem ../vendor/llama.cpp/ggml/include \
+               -isystem ../vendor/llama.cpp/common \
+               -isystem ../vendor/llama.cpp/vendor"
           fail=0
           for f in bridge_*.cpp; do
             echo "::group::$f"
@@ -62,11 +50,13 @@ jobs:
             exit 1
           fi
 
-  # ── 0b. Validate every Lua module loads (mocked FFI, no native libs) ──────
-  # Catches require/syntax/typo regressions in the full ion7-core surface
-  # in ~5s, before any of the long-running build jobs even start.
-  test-modules-load:
-    name: Lua modules load (FFI + OOP)
+  # ── 0b. No-model Lua suites (no native libs needed) ───────────────────────
+  # `tests/00_modules.lua` stubs out ffi.load so every module under
+  # src/ion7/core/ loads cleanly without a built bridge / libllama.
+  # `tests/02_utilities.lua` exercises the pure-Lua helpers
+  # (util.utf8 / util.base64) — same constraint.
+  test-no-model:
+    name: Lua tests (no model, no native libs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,73 +66,61 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y luajit
 
-      - name: Verify every src/ion7/core/**/*.lua loads
-        run: luajit tests/test_modules_load.lua
+      - name: Run module-load smoke test
+        run: luajit tests/00_modules.lua
 
-  # ── 1. Pure Lua tests (no model, no GPU, fast) ─────────────────────────────
-  test-pure:
-    name: Pure Lua tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Run pure-Lua utility tests
+        run: luajit tests/02_utilities.lua
 
-      - name: Install LuaJIT
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y luajit
-
-      - name: Run pure Lua tests
-        run: luajit tests/test_pure.lua
-
-  # ── 2. Build bridge - Linux x86_64 ─────────────────────────────────────────
+  # ── 1. Build bridge — Linux x86_64 ────────────────────────────────────────
   build-linux-x64:
     name: Build bridge (Linux x86_64)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y cmake build-essential luajit
 
-      - name: Cache llama.cpp source + build
+      - name: Read llama.cpp pinned SHA
+        id: sha
+        run: echo "sha=$(git -C vendor/llama.cpp rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache vendored llama.cpp build
         id: cache-llama
         uses: actions/cache@v4
         with:
-          path: |
-            /tmp/llama-src
-            /tmp/llama-build
-          key: llama-${{ env.LLAMA_CPP_REF }}-linux-x64-cpu
+          path: vendor/llama.cpp/build
+          key: llama-linux-x64-${{ steps.sha.outputs.sha }}
 
-      - name: Build llama.cpp (CPU-only)
+      - name: Build vendored llama.cpp (CPU-only)
         if: steps.cache-llama.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch ${{ env.LLAMA_CPP_REF }} \
-            https://github.com/ggerganov/llama.cpp /tmp/llama-src
-          cmake -B /tmp/llama-build /tmp/llama-src \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DCMAKE_CXX_FLAGS="-O1"
-          cmake --build /tmp/llama-build --config Release -j$(nproc)
+        run: make llama LLAMA_CMAKE_EXTRA="-DGGML_CUDA=OFF -DCMAKE_CXX_FLAGS=-O1"
 
-      - name: Build ion7-core bridge
-        run: make build LIB_DIR=/tmp/llama-build/bin COMMON_LIB_DIR=/tmp/llama-build/common LLAMA_SRC=/tmp/llama-src
+      - name: Build ion7 bridge
+        run: make build
 
-      - name: Verify bridge
+      - name: Inspect bridge symbols
         run: |
           echo "=== Bridge binary ==="
           ls -lh bridge/ion7_bridge.so
           echo "=== Exported ion7 symbols ==="
-          nm -D bridge/ion7_bridge.so | grep " T ion7_" | wc -l | xargs -I{} echo "{} exported symbols"
+          nm -D bridge/ion7_bridge.so | grep " T ion7_" | wc -l \
+            | xargs -I{} echo "{} exported ion7_* symbols"
           nm -D bridge/ion7_bridge.so | grep " T ion7_" | head -10
-          echo "=== Undefined symbols (must only be llama_*/ggml_*) ==="
-          nm -D bridge/ion7_bridge.so | grep " U " | grep -v "llama_\|ggml_\|__" | wc -l | xargs -I{} echo "{} unexpected undefined symbols"
-          nm -D bridge/ion7_bridge.so | grep " U " | grep -v "llama_\|ggml_\|__" || echo "None - OK"
-          echo "=== Pure Lua tests (no bridge needed) ==="
-          luajit tests/test_pure.lua
+
+      - name: Lua-side smoke test (capabilities only)
+        env:
+          ION7_LIBLLAMA_PATH: ${{ github.workspace }}/vendor/llama.cpp/build/bin/libllama.so
+          ION7_LIBGGML_PATH:  ${{ github.workspace }}/vendor/llama.cpp/build/bin/libggml.so
+          ION7_BRIDGE_PATH:   ${{ github.workspace }}/bridge/ion7_bridge.so
+          LD_LIBRARY_PATH:    ${{ github.workspace }}/vendor/llama.cpp/build/bin
+        run: |
+          luajit tests/01_capabilities.lua
 
       - name: Upload bridge artifact
         uses: actions/upload-artifact@v4
@@ -150,56 +128,44 @@ jobs:
           name: ion7_bridge-linux-x64
           path: bridge/ion7_bridge.so
 
-  # ── 3. Build bridge - macOS ARM64 ──────────────────────────────────────────
+  # ── 2. Build bridge — macOS ARM64 ─────────────────────────────────────────
   build-macos-arm64:
     name: Build bridge (macOS ARM64)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install dependencies
         run: brew install cmake luajit
 
-      - name: Cache llama.cpp source + build
+      - name: Read llama.cpp pinned SHA
+        id: sha
+        run: echo "sha=$(git -C vendor/llama.cpp rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache vendored llama.cpp build
         id: cache-llama
         uses: actions/cache@v4
         with:
-          path: |
-            /tmp/llama-src
-            /tmp/llama-build
-          key: llama-${{ env.LLAMA_CPP_REF }}-macos-arm64-cpu
+          path: vendor/llama.cpp/build
+          key: llama-macos-arm64-${{ steps.sha.outputs.sha }}
 
-      - name: Build llama.cpp (CPU + Metal)
+      - name: Build vendored llama.cpp (CPU + Metal)
         if: steps.cache-llama.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch ${{ env.LLAMA_CPP_REF }} \
-            https://github.com/ggerganov/llama.cpp /tmp/llama-src
-          cmake -B /tmp/llama-build /tmp/llama-src \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DGGML_METAL=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF
-          cmake --build /tmp/llama-build --config Release -j$(sysctl -n hw.logicalcpu)
+        run: make llama LLAMA_CMAKE_EXTRA="-DGGML_CUDA=OFF -DGGML_METAL=ON"
 
-      - name: Build ion7-core bridge
-        run: make build LIB_DIR=/tmp/llama-build/bin COMMON_LIB_DIR=/tmp/llama-build/common LLAMA_SRC=/tmp/llama-src
+      - name: Build ion7 bridge
+        run: make build
 
-      - name: Verify bridge
+      - name: Lua-side smoke test (capabilities only)
+        env:
+          ION7_LIBLLAMA_PATH: ${{ github.workspace }}/vendor/llama.cpp/build/bin/libllama.dylib
+          ION7_LIBGGML_PATH:  ${{ github.workspace }}/vendor/llama.cpp/build/bin/libggml.dylib
+          ION7_BRIDGE_PATH:   ${{ github.workspace }}/bridge/ion7_bridge.so
+          DYLD_LIBRARY_PATH:  ${{ github.workspace }}/vendor/llama.cpp/build/bin
         run: |
-          ls -lh bridge/ion7_bridge.so
-          luajit -e "
-            package.path = './src/?.lua;./src/?/init.lua;' .. package.path
-            local ion7 = require 'ion7.core'
-            ion7.init({ log_level = 0,
-              llama_path  = '/tmp/llama-build/bin/libllama.dylib',
-              bridge_path = './bridge/ion7_bridge.so'
-            })
-            local cap = ion7.capabilities()
-            print('bridge: ' .. cap.bridge_ver)
-            ion7.shutdown()
-            print('OK')
-          "
+          luajit tests/01_capabilities.lua
 
       - name: Upload bridge artifact
         uses: actions/upload-artifact@v4
@@ -207,42 +173,37 @@ jobs:
           name: ion7_bridge-macos-arm64
           path: bridge/ion7_bridge.so
 
-  # ── 4. Build bridge - Linux ARM64 ──────────────────────────────────────────
+  # ── 3. Build bridge — Linux ARM64 ─────────────────────────────────────────
   build-linux-arm64:
     name: Build bridge (Linux ARM64)
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y cmake build-essential luajit
 
-      - name: Cache llama.cpp source + build
+      - name: Read llama.cpp pinned SHA
+        id: sha
+        run: echo "sha=$(git -C vendor/llama.cpp rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache vendored llama.cpp build
         id: cache-llama
         uses: actions/cache@v4
         with:
-          path: |
-            /tmp/llama-src
-            /tmp/llama-build
-          key: llama-${{ env.LLAMA_CPP_REF }}-linux-arm64-cpu
+          path: vendor/llama.cpp/build
+          key: llama-linux-arm64-${{ steps.sha.outputs.sha }}
 
-      - name: Build llama.cpp (CPU-only)
+      - name: Build vendored llama.cpp (CPU-only)
         if: steps.cache-llama.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch ${{ env.LLAMA_CPP_REF }} \
-            https://github.com/ggerganov/llama.cpp /tmp/llama-src
-          cmake -B /tmp/llama-build /tmp/llama-src \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DCMAKE_CXX_FLAGS="-O1"
-          cmake --build /tmp/llama-build --config Release -j$(nproc)
+        run: make llama LLAMA_CMAKE_EXTRA="-DGGML_CUDA=OFF -DCMAKE_CXX_FLAGS=-O1"
 
-      - name: Build ion7-core bridge
-        run: make build LIB_DIR=/tmp/llama-build/bin COMMON_LIB_DIR=/tmp/llama-build/common LLAMA_SRC=/tmp/llama-src
+      - name: Build ion7 bridge
+        run: make build
 
       - name: Upload bridge artifact
         uses: actions/upload-artifact@v4
