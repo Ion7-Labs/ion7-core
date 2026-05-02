@@ -1,147 +1,209 @@
 --- @module ion7.core
---- SPDX-License-Identifier: MIT
---- Ion7 Core - Silicon-level LuaJIT runtime for llama.cpp.
+--- @author  ion7 / Ion7 Project Contributors
 ---
---- This is the foundation layer of the Ion7 ecosystem.
---- It provides direct, zero-overhead access to every llama.cpp primitive.
+--- Ion7 Core — silicon-level LuaJIT runtime for llama.cpp.
 ---
---- What ion7-core IS:
----   Model loading, context management, tokenization, KV cache ops,
----   state persistence, sampler chain construction, custom Lua samplers,
----   threadpool management, performance monitoring.
+--- The foundation layer of the Ion7 ecosystem. Provides a Lua-ergonomic
+--- OOP wrapper over llama.cpp's stable C API, plus a small libcommon
+--- bridge for the C++ helpers that cannot be FFI'd directly (chat
+--- templates, common_sampler, common_speculative, JSON-schema-to-GBNF,
+--- VRAM auto-fit).
 ---
---- What ion7-core is NOT:
----   Chat pipelines, stop-string handling, streaming, RAG, embeddings,
----   grammar compilers. Those live in dedicated modules (ion7-llm, etc.)
+--- What ion7-core IS :
+---   - Model loading + introspection + metadata + LoRA + quantize.
+---   - Context management : decode / encode, KV cache, state I/O.
+---   - Vocabulary : tokenize / detokenize / Jinja2 templates.
+---   - Sampler chains : 20+ samplers with a fluent builder + custom
+---     Lua-implemented samplers via `ffi.cast` trampolines.
+---   - Threadpool, speculative decoding, perf counters.
+---   - Pure-Lua utilities : UTF-8 streaming, base64 codec, log routing,
+---     tensor inspection.
 ---
---- Usage:
----   local ion7    = require "ion7.core"
----   ion7.init({ log_level = 0 })
+--- What ion7-core is NOT :
+---   Chat pipelines, stop-string detection, streaming protocols, RAG,
+---   embedding stores, grammar compilers. Those live in dedicated
+---   downstream modules (`ion7-llm`, `ion7-embed`, `ion7-grammar`,
+---   `ion7-engram`).
 ---
----   local model   = ion7.Model.load("/path/to/model.gguf")
----   local ctx     = model:context()
+---   local ion7 = require "ion7.core"
+---   ion7.init({ log_level = 1 })
+---
+---   local model   = ion7.Model.load("qwen3-32b.gguf", { n_gpu_layers = 25 })
+---   local ctx     = model:context({ n_ctx = 65536, kv_type = "q8_0" })
 ---   local vocab   = model:vocab()
----   local sampler = ion7.Sampler.chain():top_k(50):temp(0.8):dist():build(vocab)
+---   local sampler = ion7.Sampler.default()
 ---
----   local tokens, n = vocab:tokenize("Hello", true, false)
----   ctx:decode(tokens, n, 0, 0)
----   local token = sampler:sample(ctx:ptr(), 0)
----   print(vocab:piece(token))
+---   ctx:warmup()                                 -- pre-JIT GPU shaders
+---
+---   local toks, n = vocab:tokenize("Hello, world!", true, false)
+---   ctx:decode(toks, n)
+---   for _ = 1, 20 do
+---     local tok = sampler:sample(ctx:ptr(), 0)
+---     io.write(vocab:piece(tok))
+---     ctx:decode_single(tok)
+---   end
 ---
 ---   ion7.shutdown()
 ---
---- See examples/ for runnable demos.
+--- Lazy module loading :
+---   The class modules (`Model`, `Context`, ...) are loaded on FIRST
+---   ACCESS via a `__index` metatable hook ; importing `ion7.core`
+---   does not pay the cost of pulling in every sub-module up front.
+---   The utility modules under `util/` are similarly lazy.
 
 local ion7 = {}
 
--- ── Lazy module registry ──────────────────────────────────────────────────────
--- Modules load on first access to keep startup time minimal.
+-- ── Class registry (lazy) ─────────────────────────────────────────────────
+--
+-- Each entry is `field_name → require_path`. The `__index` hook below
+-- requires the module on first access and caches the result via
+-- `rawset`, so subsequent reads are direct table lookups.
 
-local _loaded = {}
-local _modules = {
-    Model         = "ion7.core.model",
-    Context       = "ion7.core.context",
-    Vocab         = "ion7.core.vocab",
-    Sampler       = "ion7.core.sampler",
+local _CLASSES = {
+    Model = "ion7.core.model",
+    Context = "ion7.core.context",
+    Vocab = "ion7.core.vocab",
+    Sampler = "ion7.core.sampler",
     CustomSampler = "ion7.core.custom_sampler",
-    Threadpool    = "ion7.core.threadpool",
-    Speculative   = "ion7.core.speculative",
+    Threadpool = "ion7.core.threadpool",
+    Speculative = "ion7.core.speculative"
 }
 
-setmetatable(ion7, {
-    __index = function(t, k)
-        if _modules[k] then
-            if not _loaded[k] then
-                _loaded[k] = require(_modules[k])
+-- ── Utility re-exports (lazy) ─────────────────────────────────────────────
+--
+-- The four `util/*` helpers are exposed at the top level as well so
+-- callers can do `ion7.utf8.is_complete(...)` without remembering the
+-- sub-path. Same lazy-load mechanism as the classes above.
+
+local _UTILS = {
+    utf8 = "ion7.core.util.utf8",
+    base64 = "ion7.core.util.base64",
+    log = "ion7.core.util.log",
+    tensor = "ion7.core.util.tensor"
+}
+
+setmetatable(
+    ion7,
+    {
+        __index = function(t, k)
+            local p = _CLASSES[k] or _UTILS[k]
+            if not p then
+                return nil
             end
-            rawset(t, k, _loaded[k])
-            return _loaded[k]
+            local mod = require(p)
+            rawset(t, k, mod)
+            return mod
         end
-    end
-})
+    }
+)
 
-local Loader = require "ion7.core.ffi.loader"
+-- ── Eagerly-required FFI surfaces used by the lifecycle helpers ──────────
+--
+-- These modules are tiny (a few cdef + ffi.load lines each) and almost
+-- every consumer ends up touching them via the lifecycle functions
+-- below — pre-loading saves a metatable lookup on first use without
+-- meaningful cost.
 
--- ── Lifecycle ─────────────────────────────────────────────────────────────────
+local llama_backend = require "ion7.core.ffi.llama.backend" -- backend_init/free, supports_*
+local ffi = require "ffi"
+local ffi_string = ffi.string
 
---- Initialize the llama.cpp backend.
---- Must be called once before any model is loaded.
+-- ── Lifecycle ────────────────────────────────────────────────────────────
+
+--- Initialise the llama.cpp + ggml backend and configure logging.
+--- Must be called once at process startup, BEFORE loading any model.
 ---
 --- @param opts table?
----   opts.log_level   number?  0=silent(default) 1=error 2=warn 3=info 4=debug
----   opts.llama_path  string?  Directory containing libllama.so
----   opts.bridge_path string?  Directory containing ion7_bridge.so
+---   `log_level` (integer, default 0) — 0=silent, 1=error, 2=warn,
+---                3=info, 4=debug. See `ion7.core.util.log`.
+---   `log_file`  (string, optional)   — redirect output to a file path
+---                instead of stderr.
+---   `log_timestamps` (bool, optional) — prepend ISO-8601 timestamps.
 function ion7.init(opts)
     opts = opts or {}
-    Loader.init({
-        log_level   = opts.log_level   or 0,
-        llama_path  = opts.llama_path,
-        bridge_path = opts.bridge_path,
-    })
-    local L = Loader.instance()
-    L.bridge.ion7_backend_init()
-    L.bridge.ion7_set_log_level(opts.log_level or 0)
-end
 
---- Release all llama.cpp resources. Call once at process exit.
---- Safe to call multiple times.
-function ion7.shutdown()
-    if Loader._instance then
-        pcall(function() Loader.instance().bridge.ion7_backend_free() end)
+    -- Wire up our log dispatcher BEFORE backend_init so the backend's
+    -- own boot messages route through our level filter.
+    local log = ion7.log -- triggers lazy require
+    if opts.log_level then
+        log.set_level(opts.log_level)
     end
+    if opts.log_file then
+        log.to_file(opts.log_file)
+    end
+    if opts.log_timestamps ~= nil then
+        log.set_timestamps(opts.log_timestamps)
+    end
+    log.install()
+
+    llama_backend.llama_backend_init()
 end
 
--- ── Runtime info ──────────────────────────────────────────────────────────────
+--- Release every llama.cpp / ggml resource. Safe to call multiple
+--- times (the second call is a no-op). Pair with `init` at process
+--- exit to release VRAM cleanly.
+function ion7.shutdown()
+    -- Wrap in pcall : on a Ctrl-C path the FFI lib may already be
+    -- partially torn down ; we still want shutdown() to be best-effort.
+    pcall(llama_backend.llama_backend_free)
+    pcall(
+        function()
+            ion7.log.uninstall()
+        end
+    )
+end
 
---- Return a table of build-time and runtime capabilities.
---- Downstream modules (ion7-llm, ion7-embed) use this to adapt behavior.
+-- ── Runtime capabilities ─────────────────────────────────────────────────
+
+--- Snapshot of the build-time and runtime capabilities of the linked
+--- libllama / bridge. Downstream modules (`ion7-llm`, `ion7-embed`)
+--- consult this to adapt behaviour (e.g. enable mmap when supported).
 ---
---- @return table
----   { mmap, mlock, gpu_offload, rpc, max_devices, max_parallel_seqs,
----     bridge_ver, llama_info }
+--- @return table {
+---   mmap, mlock, gpu_offload, rpc,
+---   max_devices, max_parallel_seqs,
+---   bridge_ver, llama_info
+--- }
 function ion7.capabilities()
-    local L  = Loader.instance()
-    local br = L.bridge
+    -- Lazy-require the bridge so a Vocab-only consumer (no .so) can
+    -- still use the rest of the API surface.
+    local bridge_ok, bridge = pcall(require, "ion7.core.ffi.bridge")
+
     return {
-        mmap              = br.ion7_supports_mmap()           == 1,
-        mlock             = br.ion7_supports_mlock()          == 1,
-        gpu_offload       = br.ion7_supports_gpu_offload()    == 1,
-        rpc               = br.ion7_supports_rpc()            == 1,
-        max_devices       = tonumber(br.ion7_max_devices()),
-        max_parallel_seqs = tonumber(br.ion7_max_parallel_sequences()),
-        bridge_ver        = L.ffi.string(br.ion7_bridge_version()),
-        llama_info        = L.ffi.string(br.ion7_llama_info()),
+        mmap = llama_backend.llama_supports_mmap() == true,
+        mlock = llama_backend.llama_supports_mlock() == true,
+        gpu_offload = llama_backend.llama_supports_gpu_offload() == true,
+        rpc = llama_backend.llama_supports_rpc() == true,
+        max_devices = tonumber(llama_backend.llama_max_devices()),
+        max_parallel_seqs = tonumber(llama_backend.llama_max_parallel_sequences()),
+        bridge_ver = bridge_ok and ffi_string(bridge.ion7_bridge_version()) or nil,
+        llama_info = ffi_string(llama_backend.llama_print_system_info())
     }
 end
 
---- Microsecond timestamp from llama.cpp internal clock.
---- Useful for precise timing inside generation loops.
---- @return number
+--- Microsecond timestamp from llama.cpp's internal monotonic clock.
+--- Useful for precise inner-loop timing without `os.clock`'s
+--- platform-dependent resolution.
+--- @return integer
 function ion7.time_us()
-    return tonumber(Loader.instance().lib.llama_time_us())
+    return tonumber(llama_backend.llama_time_us())
 end
 
--- ── NUMA ──────────────────────────────────────────────────────────────────────
+-- ── NUMA ─────────────────────────────────────────────────────────────────
 
---- Strategy constants for ion7.numa_init() (mirrors ggml_numa_strategy).
-ion7.NUMA_DISABLED   = 0  -- No NUMA optimization (default).
-ion7.NUMA_DISTRIBUTE = 1  -- Distribute threads across NUMA nodes.
-ion7.NUMA_ISOLATE    = 2  -- Isolate to a specific node.
-ion7.NUMA_NUMACTL    = 3  -- Use numactl settings.
-ion7.NUMA_MIRROR     = 4  -- Mirror across nodes.
+--- NUMA strategy constants — match the upstream `ggml_numa_strategy`
+--- enum values. Pass to `ion7.numa_init`.
+ion7.NUMA_DISABLED = 0
+ion7.NUMA_DISTRIBUTE = 1
+ion7.NUMA_ISOLATE = 2
+ion7.NUMA_NUMACTL = 3
+ion7.NUMA_MIRROR = 4
 
---- Initialize NUMA optimization for multi-socket servers.
---- Call BEFORE ion7.init() for best effect.
---- @param strategy number?  Default: NUMA_DISTRIBUTE.
+--- Configure NUMA placement. Call BEFORE `ion7.init` for the policy to
+--- apply to llama.cpp's own thread spawning.
+--- @param  strategy integer? Default `NUMA_DISTRIBUTE`.
 function ion7.numa_init(strategy)
-    Loader.instance().lib.llama_numa_init(strategy or ion7.NUMA_DISTRIBUTE)
-end
-
---- Reset the library state (backend freed, singleton cleared).
---- Allows calling ion7.init() again in the same process.
---- Primarily useful for test isolation.
-function ion7.reset()
-    require("ion7.core.ffi.loader").reset()
+    llama_backend.llama_numa_init(strategy or ion7.NUMA_DISTRIBUTE)
 end
 
 return ion7

@@ -74,50 +74,73 @@ end
 
 -- ── types.lua ──────────────────────────────────────────────────────────────
 
---- Emit `types.lua`: the consolidated forward declarations, enums, structs,
---- and typedefs.
+--- Emit `types.lua` : the consolidated forward declarations, enums,
+--- structs and typedefs.
 ---
---- A struct that exists in both `struct_fwd` and `struct` form is kept only
---- as the complete struct (the forward declaration is dropped, since the
---- complete one supersedes it for FFI purposes).
+--- Emission strategy :
+---
+---   1. Forward declarations FIRST (only those whose name has no complete
+---      `struct` definition collected later — otherwise the forward is
+---      redundant and clutters the output).
+---
+---   2. All other decls (`struct`, `typedef`, `enum`) IN AST INSERTION
+---      ORDER. clang walks the translation unit in dependency-correct
+---      order (a struct field referencing a typedef sees that typedef
+---      already in scope), so we just preserve the order our `walk_ast`
+---      observed.
+---
+---      DO NOT sort by `(source_file, extent_start)` here: filename
+---      lexicographic order can violate dependency order — for instance,
+---      `ggml-backend.h` sorts BEFORE `ggml.h` (`-` < `.` in ASCII),
+---      whereas the actual include chain pulls `ggml.h` first.
+---
+--- Decls are deduplicated by name with first-seen wins, which preserves
+--- the canonical (earliest) declaration. Lua `--` comments are forbidden
+--- inside the cdef body since it must be valid C; section labels use
+--- `/* ... */`.
 ---
 --- @param  decls      ffi_gen.ast.Decl[] All non-function decls collected during the walk.
 --- @param  output_dir string             Absolute path to `src/ion7/core/ffi/`.
 function M.write_types(decls, output_dir)
-  local fwds, structs, typedefs, enums = {}, {}, {}, {}
-  local nf, ns, nt, ne = 0, 0, 0, 0
+  -- Split into (forwards) vs (everything else), keeping insertion order.
+  local fwds_raw, rest = {}, {}
+  local nf, nr = 0, 0
   for i = 1, #decls do
     local d = decls[i]
-    local k = d.kind
-    if     k == "struct_fwd" then nf = nf + 1; fwds[nf]     = d
-    elseif k == "struct"     then ns = ns + 1; structs[ns]  = d
-    elseif k == "typedef"    then nt = nt + 1; typedefs[nt] = d
-    elseif k == "enum"       then ne = ne + 1; enums[ne]    = d
+    if d.kind == "struct_fwd" then nf = nf + 1; fwds_raw[nf] = d
+    else                            nr = nr + 1; rest[nr]    = d
     end
   end
 
-  structs  = unique_by_name(structs)
-  typedefs = unique_by_name(typedefs)
-  enums    = unique_by_name(enums)
+  -- Dedup `rest` by name, first-seen wins. `unique_by_name` preserves
+  -- the original insertion order, which is what we want.
+  local rest_unique = unique_by_name(rest)
 
-  -- Forward decls only kept for structs that have no complete definition.
-  local struct_names = {}
-  for i = 1, #structs do struct_names[structs[i].name] = true end
+  -- Build the set of struct names that have a complete definition; these
+  -- supersede any forward declaration with the same name.
+  local has_full_struct = {}
+  for i = 1, #rest_unique do
+    local d = rest_unique[i]
+    if d.kind == "struct" then has_full_struct[d.name] = true end
+  end
+
+  -- Keep only forwards that fill a real gap (no full struct shows up later).
   local fwds_kept, fk_n, seen_fwd = {}, 0, {}
-  for i = 1, #fwds do
-    local d = fwds[i]
-    if not struct_names[d.name] and not seen_fwd[d.name] then
+  for i = 1, #fwds_raw do
+    local d = fwds_raw[i]
+    if not has_full_struct[d.name] and not seen_fwd[d.name] then
       seen_fwd[d.name] = true
       fk_n = fk_n + 1
       fwds_kept[fk_n] = d
     end
   end
 
+  -- Render. C-style comments only — the body lives inside ffi.cdef[[...]].
   local function block(label, items)
     if #items == 0 then return nil end
     local body, bn = {}, 0
     for i = 1, #items do bn = bn + 1; body[bn] = items[i].spelling end
-    return "-- " .. label .. "\n" .. table_concat(body, "\n")
+    return "/* " .. label .. " */\n" .. table_concat(body, "\n")
   end
 
   local blocks, bn = {}, 0
@@ -125,10 +148,17 @@ function M.write_types(decls, output_dir)
     local b = block(label, items)
     if b then bn = bn + 1; blocks[bn] = b end
   end
-  add("Forward declarations", fwds_kept)
-  add("Enums",                enums)
-  add("Structs",              structs)
-  add("Typedefs",             typedefs)
+
+  -- Preamble : opaque system types referenced by some headers but never
+  -- defined in their AST (they come from <stdio.h>, <time.h>, ...). The
+  -- LuaJIT FFI parser does not pull in libc, so we forward-declare them
+  -- as opaque structs. Pointer-only usage (the only kind we encounter)
+  -- works fine; dereferencing them from Lua would have failed anyway.
+  bn = bn + 1
+  blocks[bn] = "/* Opaque system types (libc forwards) */\ntypedef struct __ion7_FILE FILE;"
+
+  add("Forward declarations",      fwds_kept)
+  add("Definitions (source order)", rest_unique)
   local cdef_body = table_concat(blocks, "\n\n")
 
   local out = render_lua_file(
@@ -190,15 +220,20 @@ local LOADER_PREFIX = [[-- src/ion7/core/ffi/loader.lua
 local ffi = require "ffi"
 require "ion7.core.ffi.types"   -- ensure types are ready
 
+-- Filter nil candidates (env vars not set) up front : `ipairs` would stop
+-- at the first nil and `table.concat` in the error message would crash on
+-- a sparse table.
 local function _try_load(name, candidates)
-  for _, path in ipairs(candidates) do
-    if path then
-      local ok, lib = pcall(function() return ffi.load(path) end)
-      if ok then return lib end
-    end
+  local clean, n = {}, 0
+  for _, p in pairs(candidates) do
+    if p and p ~= "" then n = n + 1; clean[n] = p end
+  end
+  for _, path in ipairs(clean) do
+    local ok, lib = pcall(function() return ffi.load(path) end)
+    if ok then return lib end
   end
   error(string.format("[ion7-core] %s not found. Candidates: %s",
-    name, table.concat(candidates, " | ")))
+    name, table.concat(clean, " | ")))
 end
 
 local function _candidates(env_var, base_name)

@@ -49,7 +49,7 @@ ION7_DOC ?= $(abspath ../ion7-doc)
 #   make docs DOCS_OUT=/path/to/ion7-labs.github.io
 DOCS_OUT ?= $(ION7_DOC)/docs
 
-.PHONY: build test docs pages clean all help llama
+.PHONY: build test docs pages clean all help llama tarball
 
 help:
 	@echo "ion7-core build targets:"
@@ -89,13 +89,53 @@ build: $(_BUILD_PREREQS)
 	$(MAKE) -C bridge \
 		LIB_DIR=$(LIB_DIR) \
 		COMMON_LIB_DIR=$(COMMON_LIB_DIR) \
-		$(if $(LLAMA_SRC),LLAMA_SRC=$(LLAMA_SRC),)
+		$(if $(LLAMA_SRC),LLAMA_SRC=$(LLAMA_SRC),) \
+		$(if $(ION7_RELEASE),ION7_RELEASE=$(ION7_RELEASE),) \
+		$(if $(MARCH),MARCH=$(MARCH),)
 
 test: build
 	@echo ""
 	@ION7_MODEL=$(ION7_MODEL) \
 	 ION7_EMBED=$(ION7_EMBED) \
 	 bash tests/run_all.sh
+
+# ── Tarball (local mirror of the CI release job) ──────────────────────────────
+# Build with ION7_RELEASE=1 (so the bridge embeds a relocatable rpath),
+# then stage every artifact a downstream consumer needs into a single
+# directory and tar it up. Useful for debugging the release packaging
+# without pushing a tag.
+#
+# Usage:
+#   make tarball                       Names the archive ion7-core-dev-<host>.tar.gz
+#   make tarball VERSION=v0.1.0        Pins the version label.
+#   make tarball TARGET=linux-x86_64-cpu  Pins the target label.
+
+VERSION ?= dev
+TARGET  ?= $(shell uname -s | tr A-Z a-z)-$(shell uname -m)-local
+TARBALL_DIR := dist
+TARBALL_NAME := ion7-core-$(VERSION)-$(TARGET)
+
+tarball:
+	$(MAKE) clean
+	$(MAKE) build ION7_RELEASE=1
+	@rm -rf $(TARBALL_DIR)/$(TARBALL_NAME)
+	@mkdir -p $(TARBALL_DIR)/$(TARBALL_NAME)/lib
+	@mkdir -p $(TARBALL_DIR)/$(TARBALL_NAME)/bin
+	@mkdir -p $(TARBALL_DIR)/$(TARBALL_NAME)/src
+	@cp bridge/ion7_bridge.so    $(TARBALL_DIR)/$(TARBALL_NAME)/lib/ 2>/dev/null || true
+	@cp bridge/ion7_bridge.dylib $(TARBALL_DIR)/$(TARBALL_NAME)/lib/ 2>/dev/null || true
+	@cp -d $(LLAMA_BUILD)/bin/lib*.so* $(TARBALL_DIR)/$(TARBALL_NAME)/lib/ 2>/dev/null || true
+	@cp -d $(LLAMA_BUILD)/bin/lib*.dylib* $(TARBALL_DIR)/$(TARBALL_NAME)/lib/ 2>/dev/null || true
+	@cp -r src/ion7 $(TARBALL_DIR)/$(TARBALL_NAME)/src/
+	@cp bin/ion7-load.lua $(TARBALL_DIR)/$(TARBALL_NAME)/bin/
+	@cp LICENSE README.md INSTALL.md $(TARBALL_DIR)/$(TARBALL_NAME)/
+	@tar czf $(TARBALL_DIR)/$(TARBALL_NAME).tar.gz -C $(TARBALL_DIR) $(TARBALL_NAME)
+	@(cd $(TARBALL_DIR) && \
+	  (sha256sum $(TARBALL_NAME).tar.gz 2>/dev/null || \
+	   shasum -a 256 $(TARBALL_NAME).tar.gz)) > $(TARBALL_DIR)/$(TARBALL_NAME).tar.gz.sha256
+	@echo ""
+	@echo "[ion7-core] tarball ready -> $(TARBALL_DIR)/$(TARBALL_NAME).tar.gz"
+	@ls -lh $(TARBALL_DIR)/$(TARBALL_NAME).tar.gz*
 
 # ── Documentation ─────────────────────────────────────────────────────────────
 docs:

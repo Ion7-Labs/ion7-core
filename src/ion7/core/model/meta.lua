@@ -1,70 +1,102 @@
 --- @module ion7.core.model.meta
---- SPDX-License-Identifier: MIT
---- Model GGUF metadata access.
---- All functions receive the Model instance as first argument.
+--- @author  ion7 / Ion7 Project Contributors
+---
+--- Mixin for `Model` : GGUF metadata access. Wraps llama.cpp's
+--- `llama_model_meta_*` family directly through the auto-generated FFI.
+---
+--- The 4 KiB temporary buffer fits every realistic GGUF metadata value
+--- (the largest in current model checkpoints — a tokenizer JSON dump —
+--- comes in well below 1 KiB). For values that exceed it, the underlying
+--- `llama_model_meta_val_str*` returns the required size and we'd need a
+--- two-pass query. We do not bother with that here because it would be
+--- exotic in practice and trivial to add later.
 
-local M = {}
+local ffi = require "ffi"
+require "ion7.core.ffi.types"
+
+local llama_model = require "ion7.core.ffi.llama.model" -- llama_model_meta_*
+
+local ffi_new = ffi.new
+local ffi_string = ffi.string
+local tonumber = tonumber
 
 local META_BUF_SIZE = 4096
 
---- @return number  Total number of GGUF metadata entries.
+local M = {}
+
+-- ── Counts and indexed access ─────────────────────────────────────────────
+
+--- Total number of GGUF metadata entries embedded in the model.
+--- @return integer
 function M.meta_count(self)
-    return tonumber(self._bridge.ion7_model_meta_count(self._ptr))
+    return tonumber(llama_model.llama_model_meta_count(self._ptr))
 end
 
---- @param  i  number  0-based index.
---- @return string?
+--- Read the metadata key at index `i` (0-based).
+--- @param  i integer
+--- @return string|nil
 function M.meta_key_at(self, i)
-    local buf = self._ffi.new("char[512]")
-    local n   = self._bridge.ion7_model_meta_key_at(self._ptr, i, buf, 512)
-    return n >= 0 and self._ffi.string(buf, n) or nil
+    local buf = ffi_new("char[?]", META_BUF_SIZE)
+    local n = llama_model.llama_model_meta_key_by_index(self._ptr, i, buf, META_BUF_SIZE)
+    return n >= 0 and ffi_string(buf, n) or nil
 end
 
---- @param  i  number  0-based index.
---- @return string?
+--- Read the metadata value at index `i` (0-based).
+--- @param  i integer
+--- @return string|nil
 function M.meta_val_at(self, i)
-    local buf = self._ffi.new("char[4096]")
-    local n   = self._bridge.ion7_model_meta_val_at(self._ptr, i, buf, 4096)
-    return n >= 0 and self._ffi.string(buf, n) or nil
+    local buf = ffi_new("char[?]", META_BUF_SIZE)
+    local n = llama_model.llama_model_meta_val_str_by_index(self._ptr, i, buf, META_BUF_SIZE)
+    return n >= 0 and ffi_string(buf, n) or nil
 end
 
---- Get a GGUF metadata value by key name.
---- @param  key  string  e.g. "general.name", "llama.context_length".
---- @return string?
+-- ── Lookup by key ─────────────────────────────────────────────────────────
+
+--- Look up a metadata value by key, e.g. `"general.name"`.
+--- @param  key string
+--- @return string|nil
 function M.meta(self, key)
-    local buf = self._ffi.new("char[?]", META_BUF_SIZE)
-    local n   = self._bridge.ion7_model_meta_val(self._ptr, key, buf, META_BUF_SIZE)
-    return n >= 0 and self._ffi.string(buf, n) or nil
+    local buf = ffi_new("char[?]", META_BUF_SIZE)
+    local n = llama_model.llama_model_meta_val_str(self._ptr, key, buf, META_BUF_SIZE)
+    return n >= 0 and ffi_string(buf, n) or nil
 end
 
---- Alias for meta().
+--- Backwards-compatible alias for `meta`.
 function M.meta_val(self, key)
     return M.meta(self, key)
 end
 
---- Return all GGUF metadata as a Lua table { key = value, ... }.
---- @return table
+-- ── Bulk export ───────────────────────────────────────────────────────────
+
+--- Return ALL GGUF metadata as a flat `{ [key] = value }` table.
+--- Useful for one-shot logging or dumping to JSON. We allocate the two
+--- scratch buffers once and reuse them across the iteration.
+--- @return table<string, string>
 function M.meta_all(self)
     local result = {}
-    local n      = self._bridge.ion7_model_meta_count(self._ptr)
-    local kbuf   = self._ffi.new("char[?]", META_BUF_SIZE)
-    local vbuf   = self._ffi.new("char[?]", META_BUF_SIZE)
+    local n = llama_model.llama_model_meta_count(self._ptr)
+    local kbuf = ffi_new("char[?]", META_BUF_SIZE)
+    local vbuf = ffi_new("char[?]", META_BUF_SIZE)
     for i = 0, n - 1 do
-        local kn = self._bridge.ion7_model_meta_key_at(self._ptr, i, kbuf, META_BUF_SIZE)
-        local vn = self._bridge.ion7_model_meta_val_at(self._ptr, i, vbuf, META_BUF_SIZE)
+        local kn = llama_model.llama_model_meta_key_by_index(self._ptr, i, kbuf, META_BUF_SIZE)
+        local vn = llama_model.llama_model_meta_val_str_by_index(self._ptr, i, vbuf, META_BUF_SIZE)
         if kn >= 0 and vn >= 0 then
-            result[self._ffi.string(kbuf, kn)] = self._ffi.string(vbuf, vn)
+            result[ffi_string(kbuf, kn)] = ffi_string(vbuf, vn)
         end
     end
     return result
 end
 
---- Get the model's built-in Jinja2 chat template string.
---- @param  name  string?  Template variant name, or nil for the default.
---- @return string?
+-- ── Embedded chat template ────────────────────────────────────────────────
+
+--- Read the model's built-in Jinja2 chat template.
+---
+--- @param  name string|nil Template variant name (e.g. `"tool_use"`),
+---                         or nil for the default template.
+--- @return string|nil      Template string, or nil if none is embedded.
 function M.chat_template(self, name)
-    local p = self._bridge.ion7_model_chat_template(self._ptr, name)
-    return (p ~= nil) and self._ffi.string(p) or nil
+    local p = llama_model.llama_model_chat_template(self._ptr, name)
+    return p ~= nil and ffi_string(p) or nil
 end
 
 return M

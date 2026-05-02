@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 880" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15">
+  <style>
+    .box       { fill: none; stroke: #6b7280; stroke-width: 1.6; rx: 10; ry: 10; }
+    .lua       { fill: #eef2ff; stroke: #4f46e5; }
+    .anchor    { fill: #fef9c3; stroke: #ca8a04; stroke-dasharray: 5 4; }
+    .native    { fill: #f0fdf4; stroke: #16a34a; }
+
+    .row-label { fill: #6b7280; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+
+    .label     { fill: #1f2937; font-weight: 700; font-size: 17px; }
+    .file      { fill: #374151; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 13px; }
+    .sub       { fill: #4b5563; font-size: 13px; }
+
+    .own       { stroke: #4b5563; stroke-width: 2.2; fill: none; marker-end: url(#tip); }
+    .ref       { stroke: #9ca3af; stroke-width: 1.6; stroke-dasharray: 5 4; fill: none; marker-end: url(#tip-light); }
+
+    .gc-tag    { fill: #16a34a; font-size: 12px; font-style: italic; font-weight: 700; }
+    .ref-tag   { fill: #6b7280; font-size: 12px; font-style: italic; }
+
+    @media (prefers-color-scheme: dark) {
+      .box       { stroke: #9ca3af; }
+      .lua       { fill: #1e1b4b; stroke: #818cf8; }
+      .anchor    { fill: #422006; stroke: #fbbf24; }
+      .native    { fill: #14532d; stroke: #4ade80; }
+      .row-label { fill: #9ca3af; }
+      .label     { fill: #e5e7eb; }
+      .file      { fill: #d1d5db; }
+      .sub       { fill: #9ca3af; }
+      .own       { stroke: #d1d5db; }
+      .ref       { stroke: #9ca3af; }
+      .gc-tag    { fill: #4ade80; }
+      .ref-tag   { fill: #9ca3af; }
+    }
+  </style>
+
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563"/>
+    </marker>
+    <marker id="tip-light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <!-- ── Row labels on the far left ─────────────────────────────────────── -->
+  <text class="row-label" x="40" y="55"  text-anchor="start">① LUA-REACHABLE HANDLES</text>
+  <text class="row-label" x="40" y="345" text-anchor="start">② ANCHORS  ·  Lua-side fields that pin native memory alive</text>
+  <text class="row-label" x="40" y="585" text-anchor="start">③ NATIVE POINTERS  ·  freed via the ffi.gc finaliser</text>
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       Column 1 — Model
+       ════════════════════════════════════════════════════════════════════ -->
+  <rect class="box lua" x="60" y="80" width="280" height="120"/>
+  <text class="label"   x="200" y="118" text-anchor="middle">Model</text>
+  <text class="sub"     x="200" y="146" text-anchor="middle">_ptr</text>
+  <text class="sub"     x="200" y="166" text-anchor="middle">_vocab cache</text>
+  <text class="sub"     x="200" y="186" text-anchor="middle">path</text>
+
+  <rect class="box native" x="60" y="610" width="280" height="120"/>
+  <text class="label"   x="200" y="650" text-anchor="middle">llama_model *</text>
+  <text class="sub"     x="200" y="680" text-anchor="middle">freed via</text>
+  <text class="file"    x="200" y="702" text-anchor="middle">llama_model_free</text>
+
+  <path class="own" d="M 200 200 L 200 608"/>
+  <text class="gc-tag"  x="215" y="410" text-anchor="start">ffi.gc</text>
+
+  <!-- vocab side-note attached below Model native -->
+  <rect class="box native" x="60" y="760" width="280" height="80"/>
+  <text class="label"   x="200" y="790" text-anchor="middle">llama_vocab *</text>
+  <text class="sub"     x="200" y="815" text-anchor="middle">owned by the model — never freed by us</text>
+  <path class="ref" d="M 200 730 L 200 758"/>
+  <text class="ref-tag" x="215" y="748" text-anchor="start">cached as _vocab</text>
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       Column 2 — Context
+       ════════════════════════════════════════════════════════════════════ -->
+  <rect class="box lua" x="380" y="80" width="280" height="120"/>
+  <text class="label"   x="520" y="118" text-anchor="middle">Context</text>
+  <text class="sub"     x="520" y="146" text-anchor="middle">_ptr  ·  _model_ref</text>
+  <text class="sub"     x="520" y="166" text-anchor="middle">_decode_batch</text>
+  <text class="sub"     x="520" y="186" text-anchor="middle">_batch_gc  ·  _n_past</text>
+
+  <rect class="box anchor" x="380" y="370" width="280" height="120"/>
+  <text class="label"   x="520" y="408" text-anchor="middle">_batch_gc</text>
+  <text class="sub"     x="520" y="436" text-anchor="middle">int8_t[1] sentinel cdata</text>
+  <text class="sub"     x="520" y="458" text-anchor="middle">finaliser frees the pre-allocated</text>
+  <text class="sub"     x="520" y="478" text-anchor="middle">llama_batch struct</text>
+
+  <rect class="box native" x="380" y="610" width="280" height="120"/>
+  <text class="label"   x="520" y="650" text-anchor="middle">llama_context *</text>
+  <text class="sub"     x="520" y="680" text-anchor="middle">freed via</text>
+  <text class="file"    x="520" y="702" text-anchor="middle">llama_free</text>
+
+  <path class="own" d="M 520 200 L 520 368"/>
+  <text class="gc-tag"  x="535" y="290" text-anchor="start">ffi.gc</text>
+
+  <path class="own" d="M 520 490 L 520 608"/>
+  <text class="gc-tag"  x="535" y="555" text-anchor="start">finaliser</text>
+
+  <!-- Reference : Context._model_ref → Model -->
+  <path class="ref" d="M 380 110 L 342 110"/>
+  <text class="ref-tag"  x="361" y="100" text-anchor="middle">_model_ref</text>
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       Column 3 — Sampler chain
+       ════════════════════════════════════════════════════════════════════ -->
+  <rect class="box lua" x="700" y="80" width="280" height="120"/>
+  <text class="label"   x="840" y="118" text-anchor="middle">Sampler chain</text>
+  <text class="sub"     x="840" y="146" text-anchor="middle">_chain</text>
+  <text class="sub"     x="840" y="166" text-anchor="middle">_custom_refs[ ]</text>
+
+  <rect class="box native" x="700" y="610" width="280" height="120"/>
+  <text class="label"   x="840" y="650" text-anchor="middle">llama_sampler *</text>
+  <text class="sub"     x="840" y="680" text-anchor="middle">chain head + child samplers</text>
+  <text class="file"    x="840" y="702" text-anchor="middle">llama_sampler_free</text>
+
+  <path class="own" d="M 840 200 L 840 608"/>
+  <text class="gc-tag"  x="855" y="410" text-anchor="start">ffi.gc</text>
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       Column 4 — CustomSampler
+       ════════════════════════════════════════════════════════════════════ -->
+  <rect class="box lua" x="1020" y="80" width="320" height="120"/>
+  <text class="label"   x="1180" y="118" text-anchor="middle">CustomSampler</text>
+  <text class="sub"     x="1180" y="146" text-anchor="middle">_ptr  ·  _name_buf</text>
+  <text class="sub"     x="1180" y="166" text-anchor="middle">_iface  ·  _cb_apply  ·  …</text>
+
+  <rect class="box anchor" x="1020" y="370" width="320" height="120"/>
+  <text class="label"   x="1180" y="408" text-anchor="middle">_iface  +  _cb_*</text>
+  <text class="sub"     x="1180" y="436" text-anchor="middle">struct llama_sampler_i</text>
+  <text class="sub"     x="1180" y="458" text-anchor="middle">+ ffi.cast trampolines</text>
+  <text class="sub"     x="1180" y="478" text-anchor="middle">read by llama.cpp at sample time</text>
+
+  <path class="own" d="M 1180 200 L 1180 368"/>
+  <text class="gc-tag"  x="1195" y="290" text-anchor="start">anchored</text>
+
+  <!-- Reference : Sampler chain ._custom_refs → CustomSampler -->
+  <path class="ref" d="M 1020 110 L 982 110"/>
+  <text class="ref-tag"  x="1001" y="100" text-anchor="middle">_custom_refs</text>
+
+  <!-- Reference : the chain takes ownership of CustomSampler._ptr.
+       Lands on the right edge of column 3's native box (the chain
+       head, llama_sampler *), so the arrow actually points at the
+       structure that ends up owning the pointer. The two-line label
+       sits just above the horizontal segment at the elbow midpoint. -->
+  <path class="ref" d="M 1180 490 L 1180 670 L 982 670"/>
+  <text class="ref-tag" x="1081" y="636" text-anchor="middle">chain takes ownership of CustomSampler._ptr</text>
+  <text class="ref-tag" x="1081" y="654" text-anchor="middle">after :custom(cs)</text>
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       Legend at the bottom
+       ════════════════════════════════════════════════════════════════════ -->
+  <g transform="translate(60, 856)">
+    <rect class="box lua"    x="0"   y="0" width="22" height="22"/>
+    <text class="sub"        x="34"  y="16">Lua handle</text>
+
+    <rect class="box anchor" x="180" y="0" width="22" height="22"/>
+    <text class="sub"        x="214" y="16">Anchor (Lua-side pin)</text>
+
+    <rect class="box native" x="430" y="0" width="22" height="22"/>
+    <text class="sub"        x="464" y="16">Native pointer (libllama)</text>
+
+    <line  x1="700" y1="11" x2="744" y2="11" class="own"/>
+    <text class="sub"        x="754" y="16">Ownership (ffi.gc)</text>
+
+    <line  x1="930" y1="11" x2="974" y2="11" class="ref"/>
+    <text class="sub"        x="984" y="16">Reference (no ownership)</text>
+  </g>
+</svg>

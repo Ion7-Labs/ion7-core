@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev, "dev-*", "feat/*"]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 # Cancel in-progress runs on new push to same branch
 concurrency:
@@ -15,6 +15,70 @@ env:
   LLAMA_CPP_REF: master  # always use latest llama.cpp
 
 jobs:
+  # ── 0a. Bridge syntax-check (fast, no llama.cpp build needed) ─────────────
+  # Catches libcommon API drift in seconds rather than waiting for the full
+  # build matrix. Runs in parallel with everything else.
+  syntax-check-bridge:
+    name: Syntax-check bridge .cpp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang
+
+      - name: Cache llama.cpp source (headers only — no build)
+        id: cache-src
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llama-src
+          key: llama-${{ env.LLAMA_CPP_REF }}-src-only
+
+      - name: Clone llama.cpp source
+        if: steps.cache-src.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch ${{ env.LLAMA_CPP_REF }} \
+            https://github.com/ggerganov/llama.cpp /tmp/llama-src
+
+      - name: Syntax-check every bridge .cpp
+        run: |
+          cd bridge
+          INC="-isystem /tmp/llama-src/include \
+               -isystem /tmp/llama-src/ggml/include \
+               -isystem /tmp/llama-src/common \
+               -isystem /tmp/llama-src/vendor"
+          fail=0
+          for f in bridge_*.cpp; do
+            echo "::group::$f"
+            clang++ -fsyntax-only -std=c++17 -Wall -Wextra $INC "$f" || fail=1
+            echo "::endgroup::"
+          done
+          if [ $fail -eq 0 ]; then
+            echo "✓ All bridge files passed syntax check"
+          else
+            echo "✗ Bridge syntax check FAILED — see grouped logs above"
+            exit 1
+          fi
+
+  # ── 0b. Validate every Lua module loads (mocked FFI, no native libs) ──────
+  # Catches require/syntax/typo regressions in the full ion7-core surface
+  # in ~5s, before any of the long-running build jobs even start.
+  test-modules-load:
+    name: Lua modules load (FFI + OOP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LuaJIT
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y luajit
+
+      - name: Verify every src/ion7/core/**/*.lua loads
+        run: luajit tests/test_modules_load.lua
+
   # ── 1. Pure Lua tests (no model, no GPU, fast) ─────────────────────────────
   test-pure:
     name: Pure Lua tests

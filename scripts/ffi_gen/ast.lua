@@ -31,6 +31,43 @@ local M = {}
 --- @field source_file  string  Originating header (full path).
 --- @field extent_start integer Source line for stable ordering.
 
+-- ── qualType helpers (used by every renderer below) ───────────────────────
+
+--- Strip C qualifiers and macros that LuaJIT's `ffi.cdef` parser does not
+--- understand. Currently:
+---
+---   - `restrict` / `__restrict` / `__restrict__` (compiler hints with no
+---     ABI relevance — should never appear in our output, but we belt-and-
+---     brace it because clang sometimes resurfaces them despite the
+---     `-DGGML_RESTRICT=` neutralisation).
+---
+--- Returns the input unchanged if there is nothing to strip.
+---
+--- @param  qt string|nil The raw qualType string from the AST.
+--- @return string        Cleaned type spelling.
+local function clean_qualtype(qt)
+  if not qt or qt == "" then return qt or "" end
+  qt = qt:gsub("%s*__restrict__%s*", " ")
+         :gsub("%s*__restrict%s*",   " ")
+         :gsub("%s*restrict%s*",     " ")
+         :gsub("%s+$", "")
+         :gsub("%s%s+",  " ")
+  return qt
+end
+
+--- Pull the qualified type spelling from a node, defaulting to `fallback`
+--- when the field is missing. Wraps `clean_qualtype` so every render
+--- function gets stripped strings without sprinkling the call sites.
+---
+--- @param  node     table   AST node with optional `node.type.qualType`.
+--- @param  fallback string  Type to return when the qualType is absent.
+--- @return string
+local function qualtype_of(node, fallback)
+  local qt = node.type and node.type.qualType
+  if not qt then return fallback end
+  return clean_qualtype(qt)
+end
+
 -- ── Per-kind C spelling renderers ──────────────────────────────────────────
 
 --- Reconstruct a function prototype from a `FunctionDecl` node.
@@ -47,7 +84,7 @@ local M = {}
 --- @param  node table A `FunctionDecl` AST node.
 --- @return string     C prototype, terminated with `;`.
 local function render_function(node)
-  local ret_full = (node.type and node.type.qualType) or "void"
+  local ret_full = qualtype_of(node, "void")
   local paren_pos = string_find(ret_full, "%(")
   local ret = paren_pos and util.trim(string_sub(ret_full, 1, paren_pos - 1)) or ret_full
 
@@ -55,7 +92,7 @@ local function render_function(node)
   for _, child in ipairs(node.inner or {}) do
     if child.kind == "ParmVarDecl" then
       n = n + 1
-      local ptype = (child.type and child.type.qualType) or "void"
+      local ptype = qualtype_of(child, "void")
       local pname = child.name or ""
       if pname ~= "" then
         params[n] = ptype .. " " .. pname
@@ -68,47 +105,178 @@ local function render_function(node)
   return string_format("%s %s(%s);", ret, node.name, sig_args)
 end
 
+--- Render a single C field declaration prefixed with `indent` spaces.
+---
+--- Three syntactic shapes are recognised :
+---
+---   - Plain type            → `<indent><type> <name>;`
+---   - Array type            → `<indent><base> <name>[<count>];`
+---     (clang gives `int [4]`, we move the brackets next to the name).
+---   - Function-pointer type → `<indent><RetType> (*<name>)(<args>);`
+---     (clang gives `RetType (*)(args)`, we insert the name into the
+---      parens — same shape as a function-pointer typedef).
+---
+--- @param  ftype  string A C type spelling.
+--- @param  fname  string Field name.
+--- @param  indent string Leading whitespace for the line.
+--- @return string        A single-line field declaration ending with `;`.
+local function render_field(ftype, fname, indent)
+  -- Function-pointer field : insert the field name into the `(*)` slot.
+  if ftype:find("%(%*%)") then
+    return string_format("%s%s;", indent,
+                         (ftype:gsub("%(%*%)", "(*" .. fname .. ")", 1)))
+  end
+  -- Array field : move brackets from the type next to the field name.
+  local base, arr = string_match(ftype, "^(.-)%s*%[(.-)%]$")
+  if base then
+    return string_format("%s%s %s[%s];", indent, util.trim(base), fname, arr)
+  end
+  return string_format("%s%s %s;", indent, ftype, fname)
+end
+
+--- Render the body (fields only) of an anonymous nested record into an
+--- indented multi-line string. Used by `render_struct` for both the fully
+--- anonymous case (`union { ... };`) and the named-instance case
+--- (`struct { ... } name;`).
+---
+--- @param  record table  An anonymous `RecordDecl` node.
+--- @return string        Indented body with leading `\n` and no trailing newline.
+local function render_anon_body(record)
+  local sub, sn = {}, 0
+  for _, gch in ipairs(record.inner or {}) do
+    if gch.kind == "FieldDecl" and gch.name and gch.name ~= "" then
+      local gtype = qualtype_of(gch, "int")
+      sn = sn + 1
+      sub[sn] = render_field(gtype, gch.name, "        ")
+    end
+  end
+  return table_concat(sub, "\n")
+end
+
 --- Reconstruct a struct definition from a `RecordDecl` node.
 ---
---- Each `FieldDecl` child becomes one indented field. Array types
---- (`int [4]`) are rewritten to the conventional placement (`int name[4]`).
+--- clang spreads several shapes across the inner array; we walk it with
+--- an explicit index so we can pair adjacent items :
+---
+---   - `FieldDecl` (named)         → render as a regular field.
+---   - `RecordDecl` (no name)      → an anonymous nested union/struct.
+---     Look at the IMMEDIATELY following item :
+---       - if it's a `FieldDecl` with EMPTY name → fully anonymous,
+---         emit `union { ... };` and consume both items.
+---       - if it's a `FieldDecl` with a NAME and a type pointing back
+---         at the anonymous record → emit `struct { ... } name;` and
+---         consume both items.
+---       - otherwise → emit the body alone (rare safety net).
+---   - `IndirectFieldDecl`         → clang shortcut entries for anonymous
+---                                   union members. SKIP (already
+---                                   accessible via the inlined body).
 ---
 --- @param  node table A `RecordDecl` node with `completeDefinition = true`.
 --- @return string     C struct body, terminated with `;`.
 local function render_struct(node)
+  local inner = node.inner or {}
   local fields, n = {}, 0
-  for _, child in ipairs(node.inner or {}) do
-    if child.kind == "FieldDecl" then
-      n = n + 1
-      local ftype = (child.type and child.type.qualType) or "int"
-      local fname = child.name or "_unnamed"
-      -- Move array brackets from the type onto the field name.
-      local base, arr = string_match(ftype, "^(.-)%s*%[(.-)%]$")
-      if base then
-        fields[n] = string_format("    %s %s[%s];", util.trim(base), fname, arr)
+  local i = 1
+  while i <= #inner do
+    local child = inner[i]
+    local kind  = child.kind
+
+    if kind == "FieldDecl" then
+      local fname = child.name or ""
+      if fname ~= "" then
+        local ftype = qualtype_of(child, "int")
+        n = n + 1
+        fields[n] = render_field(ftype, fname, "    ")
+      end
+      -- Anonymous FieldDecl with no preceding RecordDecl : extremely
+      -- rare and would be rendered with the mangled C++ type, so we skip.
+
+    elseif kind == "RecordDecl" and (not child.name or child.name == "") then
+      local tag  = child.tagUsed or "struct"
+      local body = render_anon_body(child)
+      local nxt  = inner[i + 1]
+
+      if nxt and nxt.kind == "FieldDecl" then
+        local nname = nxt.name or ""
+        if nname == "" then
+          -- Fully anonymous : `union { ... };`
+          n = n + 1
+          fields[n] = string_format("    %s {\n%s\n    };", tag, body)
+          i = i + 1  -- consume the FieldDecl placeholder
+        else
+          -- Named instance of an anonymous record : `struct { ... } name;`
+          n = n + 1
+          fields[n] = string_format("    %s {\n%s\n    } %s;", tag, body, nname)
+          i = i + 1  -- consume the FieldDecl that named the record
+        end
       else
-        fields[n] = string_format("    %s %s;", ftype, fname)
+        -- Anonymous record with no following FieldDecl : emit body alone.
+        n = n + 1
+        fields[n] = string_format("    %s {\n%s\n    };", tag, body)
       end
     end
+    -- IndirectFieldDecl is intentionally skipped.
+
+    i = i + 1
   end
   if n == 0 then
     return string_format("struct %s;", node.name)
   end
-  return string_format("struct %s {\n%s\n};", node.name, table_concat(fields, "\n"))
+  -- Emit a self-typedef alongside the struct definition so that field
+  -- types using the bare tag name (`Foo *` rather than `struct Foo *`)
+  -- resolve under `ffi.cdef`. clang's `qualType` strings normalise away
+  -- the `struct` keyword once the matching typedef exists, but if we
+  -- only emitted the bare struct definition the cdef parser would reject
+  -- those bare-tag references. C99 allows duplicate identical typedefs,
+  -- so the extra alias is harmless even when the upstream header already
+  -- declares it.
+  return string_format("struct %s {\n%s\n};\ntypedef struct %s %s;",
+                       node.name, table_concat(fields, "\n"),
+                       node.name, node.name)
 end
 
 --- Reconstruct a `typedef X Y;` from a `TypedefDecl` node.
+---
+--- Handles three syntactic shapes that all show up in llama.h / ggml.h :
+---
+---   - Plain typedef           → `typedef <underlying> <name>;`
+---   - Function-pointer typedef → clang gives `RetType (*)(args)`; the
+---                                name must be inserted INSIDE the parens,
+---                                yielding `typedef RetType (*name)(args);`
+---   - Array typedef            → clang gives `Base [N]`; the brackets
+---                                must move next to the name, yielding
+---                                `typedef Base name[N];`
+---
 --- @param  node table A `TypedefDecl` node.
---- @return string     `typedef <underlying> <name>;`.
+--- @return string     A valid C typedef declaration, terminated with `;`.
 local function render_typedef(node)
-  local underlying = (node.type and node.type.qualType) or "int"
-  return string_format("typedef %s %s;", underlying, node.name)
+  local underlying = qualtype_of(node, "int")
+  local name       = node.name
+
+  -- Function-pointer typedef : the `(*)` slot must receive the name.
+  if underlying:find("%(%*%)") then
+    return string_format("typedef %s;",
+                         (underlying:gsub("%(%*%)", "(*" .. name .. ")", 1)))
+  end
+
+  -- Array typedef : `int [10]` → `int name[10]`.
+  local base, arr = string_match(underlying, "^(.-)%s*%[(.-)%]$")
+  if base then
+    return string_format("typedef %s %s[%s];", util.trim(base), name, arr)
+  end
+
+  return string_format("typedef %s %s;", underlying, name)
 end
 
 --- Reconstruct an enum definition from an `EnumDecl` node.
 ---
---- The numeric value of each `EnumConstantDecl` lives in `inner[1].value`
---- (a string in the JSON, since clang preserves user-written radix/sign).
+--- For `EnumConstantDecl` nodes that have an explicit value, clang nests
+--- a `ConstantExpr` (or similar) under `inner[1]` carrying the numeric
+--- string in `value`. For implicit auto-incremented constants, `inner`
+--- is empty — in that case we EMIT THE NAME ALONE, letting the C
+--- compiler (or `ffi.cdef` parser) resume the auto-increment cleanly.
+--- This avoids a class of bugs where every implicit member would be
+--- rendered with the wrong literal value (e.g. all 0).
 ---
 --- @param  node table An `EnumDecl` node.
 --- @return string     `enum <name> { ... };`.
@@ -117,12 +285,17 @@ local function render_enum(node)
   for _, child in ipairs(node.inner or {}) do
     if child.kind == "EnumConstantDecl" then
       n = n + 1
-      local val = "0"
-      if child.inner and child.inner[1] then
-        local v = child.inner[1].value
-        if v ~= nil then val = tostring(v) end
+      local explicit_value
+      if child.inner and child.inner[1] and child.inner[1].value ~= nil then
+        explicit_value = tostring(child.inner[1].value)
       end
-      consts[n] = string_format("    %s = %s,", child.name, val)
+      if explicit_value then
+        consts[n] = string_format("    %s = %s,", child.name, explicit_value)
+      else
+        -- Implicit value : let the C parser auto-increment from the
+        -- previous member (defaults to 0 for the first).
+        consts[n] = string_format("    %s,", child.name)
+      end
     end
   end
   if n == 0 then

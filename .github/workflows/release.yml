@@ -3,170 +3,258 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*"   # triggers on v1.0.0, v1.1.0, etc.
-
-env:
-  LLAMA_CPP_REF: master
+      - "v*.*.*"
+  workflow_dispatch:    # manual trigger for dry-run testing
 
 jobs:
-  # ── Build matrix ─────────────────────────────────────────────────────────────
+  # ── Build matrix ─────────────────────────────────────────────────────────
   build:
-    name: Build ${{ matrix.name }}
+    name: ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
+        # Every entry passes `-DGGML_CUDA=OFF` explicitly because the
+        # vendored llama.cpp's CMakeLists has `GGML_CUDA=ON` as its
+        # default ; cmake would otherwise look for `nvcc` on every
+        # runner and fail the configure step on the cards-without-CUDA
+        # platforms (ARM, macOS, Linux CPU runner).
         include:
-          - name: linux-x86_64
-            os: ubuntu-latest
-            llama_lib: libllama.so
-            bridge_out: ion7_bridge.so
-            cmake_flags: ""
+          # Linux x86_64
+          - target:    linux-x86_64-cpu
+            os:        ubuntu-latest
+            backend:   cpu
+            cmake_flags: "-DGGML_CUDA=OFF"
+            apt_extra:  ""
+          - target:    linux-x86_64-vulkan
+            os:        ubuntu-latest
+            backend:   vulkan
+            cmake_flags: "-DGGML_CUDA=OFF -DGGML_VULKAN=ON"
+            apt_extra:   "libvulkan-dev glslang-tools spirv-headers"
 
-          - name: linux-arm64
-            os: ubuntu-24.04-arm
-            llama_lib: libllama.so
-            bridge_out: ion7_bridge.so
-            cmake_flags: ""
+          # Linux aarch64
+          - target:    linux-aarch64-cpu
+            os:        ubuntu-24.04-arm
+            backend:   cpu
+            cmake_flags: "-DGGML_CUDA=OFF"
+            apt_extra:  ""
 
-          - name: macos-arm64
-            os: macos-latest
-            llama_lib: libllama.dylib
-            bridge_out: ion7_bridge.so
-            cmake_flags: "-DGGML_METAL=ON"
+          # macOS
+          - target:    macos-arm64-metal
+            os:        macos-14
+            backend:   metal
+            cmake_flags: "-DGGML_CUDA=OFF -DGGML_METAL=ON"
+            apt_extra:  ""
+          - target:    macos-x86_64-cpu
+            os:        macos-13
+            backend:   cpu
+            cmake_flags: "-DGGML_CUDA=OFF"
+            apt_extra:  ""
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Read llama.cpp pinned SHA
+        id: llama_sha
+        shell: bash
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y cmake build-essential
+          SHA="$(git -C vendor/llama.cpp rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install cmake
-
-      - name: Cache llama.cpp build
+      - name: Cache vendored llama.cpp build
         id: cache-llama
         uses: actions/cache@v4
         with:
-          path: /tmp/llama-build
-          key: llama-${{ env.LLAMA_CPP_REF }}-${{ matrix.name }}
+          path: vendor/llama.cpp/build
+          key: llama-${{ matrix.target }}-${{ steps.llama_sha.outputs.sha }}
 
-      - name: Build llama.cpp
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake build-essential ${{ matrix.apt_extra }}
+
+      - name: Install build deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
+      - name: Build vendored llama.cpp
         if: steps.cache-llama.outputs.cache-hit != 'true'
+        run: make llama LLAMA_CMAKE_EXTRA="${{ matrix.cmake_flags }}"
+
+      - name: Build ion7 bridge (release rpath)
+        env:
+          ION7_RELEASE: "1"
+        run: make build
+
+      # ── Package ────────────────────────────────────────────────────────
+      - name: Package release tarball
+        id: pkg
+        shell: bash
         run: |
-          git clone --depth 1 --branch ${{ env.LLAMA_CPP_REF }} \
-            https://github.com/ggerganov/llama.cpp /tmp/llama-src
-          cmake -B /tmp/llama-build /tmp/llama-src \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
-            ${{ matrix.cmake_flags }}
-          cmake --build /tmp/llama-build --config Release \
-            -j$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          NAME="ion7-core-${VERSION}-${{ matrix.target }}"
+          STAGE="$NAME"
 
-      - name: Build ion7-core bridge
-        run: make build LIB_DIR=/tmp/llama-build/bin LLAMA_SRC=/tmp/llama-src
+          mkdir -p "$STAGE/lib" "$STAGE/bin"
 
-      # ── Package release tarball ─────────────────────────────────────────────
-      - name: Package
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          ASSET="ion7-core-${VERSION}-${{ matrix.name }}-cpu"
-          mkdir -p "${ASSET}/lib" "${ASSET}/src"
+          # Native libraries — bridge + every llama.cpp shared lib it
+          # transitively pulls in. We follow the dylib / so glob and
+          # rely on the rpath baked above ($ORIGIN / @loader_path) to
+          # resolve siblings at load time.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cp bridge/ion7_bridge.so                       "$STAGE/lib/" || true
+            cp bridge/ion7_bridge.dylib                    "$STAGE/lib/" || true
+            cp vendor/llama.cpp/build/bin/lib*.dylib*      "$STAGE/lib/" || true
+          else
+            cp bridge/ion7_bridge.so                       "$STAGE/lib/"
+            cp -d vendor/llama.cpp/build/bin/lib*.so*      "$STAGE/lib/" || true
+          fi
 
-          # Bridge
-          cp bridge/ion7_bridge.so "${ASSET}/lib/" 2>/dev/null || \
-          cp bridge/ion7_bridge.dylib "${ASSET}/lib/" 2>/dev/null || true
+          # Strip debug info to shrink the tarball. macOS uses different
+          # flags ; the `|| true` keeps the step idempotent if there is
+          # nothing to strip (already stripped, missing tool, ...).
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            strip --strip-unneeded "$STAGE/lib/"*.so* 2>/dev/null || true
+          else
+            strip -x "$STAGE/lib/"*.dylib* 2>/dev/null || true
+          fi
 
-          # llama.cpp shared libs (CPU-only build)
-          cp /tmp/llama-build/bin/libllama.* "${ASSET}/lib/" 2>/dev/null || true
-          cp /tmp/llama-build/bin/libggml*.  "${ASSET}/lib/" 2>/dev/null || true
+          # Lua runtime + helper loader
+          cp -r src/ion7    "$STAGE/src/" 2>/dev/null
+          mkdir -p "$STAGE/src" && cp -r src/ion7 "$STAGE/src/"
+          cp bin/ion7-load.lua  "$STAGE/bin/"
 
-          # Lua sources
-          cp -r src/ion7 "${ASSET}/src/"
+          # Top-level docs
+          cp LICENSE README.md INSTALL.md "$STAGE/"
 
-          # Docs
-          cp README.md INSTALL.md LICENSE "${ASSET}/"
+          tar czf "$NAME.tar.gz" "$STAGE"
 
-          # Add a quick env setup helper
-          cat > "${ASSET}/setup.sh" << 'EOF'
-          #!/usr/bin/env bash
-          # Source this file to configure ion7-core environment variables.
-          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          export LLAMA_LIB="${SCRIPT_DIR}/lib/libllama.so"
-          export ION7_BRIDGE="${SCRIPT_DIR}/lib/ion7_bridge.so"
-          export LUA_PATH="${SCRIPT_DIR}/src/?.lua;${SCRIPT_DIR}/src/?/init.lua;${LUA_PATH}"
-          echo "[ion7-core] environment set (lib: ${SCRIPT_DIR}/lib)"
-          EOF
-          chmod +x "${ASSET}/setup.sh"
+          # SHA256 — `sha256sum` on Linux, `shasum -a 256` on macOS.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+          else
+            shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+          fi
 
-          tar czf "${ASSET}.tar.gz" "${ASSET}/"
-          echo "ASSET_PATH=${ASSET}.tar.gz" >> "$GITHUB_ENV"
-          echo "ASSET_NAME=${ASSET}.tar.gz" >> "$GITHUB_ENV"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Upload release artifact
+      - name: Upload artifact
+        # `actions/upload-artifact` reaches GitHub's runtime token to
+        # talk to the artifact storage service ; that token does not
+        # exist when the workflow runs through `act` locally. Skipping
+        # this step there lets a local dry-run finish green while the
+        # real CI keeps publishing the bundle as usual.
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.name }}
-          path: "*.tar.gz"
+          name: ${{ steps.pkg.outputs.name }}
+          path: |
+            ion7-core-*.tar.gz
+            ion7-core-*.tar.gz.sha256
 
-  # ── Publish GitHub Release ──────────────────────────────────────────────────
+  # ── Publish a GitHub Release once every build is green ──────────────────
   publish:
-    name: Publish release
+    name: Publish GitHub release
     needs: build
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # need full history for changelog
 
-      - name: Download all artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: release-*
+          pattern: ion7-core-*
           merge-multiple: true
           path: dist/
+
+      - name: Compose release notes
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          PREV="$(git tag --sort=-v:refname | sed -n '2p')"
+          if [ -n "$PREV" ]; then
+            RANGE="$PREV..HEAD"
+          else
+            RANGE=""
+          fi
+          {
+            echo "## ion7-core $VERSION"
+            echo
+            echo "### Pre-built tarballs"
+            echo
+            echo "Each tarball ships the ion7 bridge, the matching llama.cpp"
+            echo "shared libraries, the Lua runtime and a \`bin/ion7-load.lua\`"
+            echo "preamble that wires \`package.path\` and the loader env vars."
+            echo "Extract anywhere and \`dofile(\"<path>/bin/ion7-load.lua\")\`."
+            echo
+            echo "Backends covered :"
+            echo "- Linux x86_64 (CPU AVX2, Vulkan)"
+            echo "- Linux aarch64 (CPU NEON)"
+            echo "- macOS arm64 (Metal — auto-on)"
+            echo "- macOS x86_64 (CPU)"
+            echo
+            echo "CUDA and ROCm tarballs are not shipped — driver / toolkit"
+            echo "version coupling makes a redistributable binary unsafe."
+            echo "Build locally :"
+            echo
+            echo '```bash'
+            echo "make llama LLAMA_CMAKE_EXTRA='-DGGML_CUDA=ON'"
+            echo "make build ION7_RELEASE=1"
+            echo '```'
+            echo
+            if [ -n "$RANGE" ]; then
+              echo "### Commits since $PREV"
+              echo
+              git log --oneline --no-merges "$RANGE" | sed 's/^/- /'
+            fi
+          } > /tmp/release_notes.md
 
       - name: List assets
         run: ls -lh dist/
 
-      - name: Write release notes
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          PREV_TAG=$(git tag --sort=-version:refname | sed -n '2p' || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            CHANGES=$(git log --oneline "${PREV_TAG}..HEAD" --no-merges | head -30)
-          else
-            CHANGES=$(git log --oneline --no-merges | head -30)
-          fi
-          cat > /tmp/release_notes.md << NOTES
-          ## ion7-core ${VERSION}
-
-          ### Pre-built bridges (CPU-only)
-
-          For GPU acceleration (CUDA/ROCm/Metal), compile the bridge with your local llama.cpp build:
-          \`\`\`bash
-          make build LIB_DIR=/path/to/llama.cpp/build/bin
-          \`\`\`
-
-          ### Built against llama.cpp ${{ env.LLAMA_CPP_REF }}
-
-          ### Changes
-          ${CHANGES}
-          NOTES
-
-      - name: Create GitHub Release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          name: "ion7-core ${{ github.ref_name }}"
+          # Same PAT the docs workflow consumes — lets the release
+          # publish use the project-wide org token rather than the
+          # repo-scoped GITHUB_TOKEN, so attribution and downstream
+          # repository_dispatch hooks share a single identity.
+          token:     ${{ secrets.PAGES_TOKEN }}
+          name:      "ion7-core ${{ github.ref_name }}"
           body_path: /tmp/release_notes.md
-          files: dist/*.tar.gz
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          files: |
+            dist/ion7-core-*.tar.gz
+            dist/ion7-core-*.tar.gz.sha256
+          prerelease: ${{ contains(github.ref_name, '-rc') ||
+                          contains(github.ref_name, '-beta') ||
+                          contains(github.ref_name, '-alpha') }}
+
+      # Notify ion7-doc that ion7-core just published a release. The
+      # docs workflow listens for `repository_dispatch: types: [docs]`
+      # and re-renders the API reference + portal against the new
+      # release tag.
+      - name: Trigger docs rebuild
+        run: |
+          curl -fsSL -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.PAGES_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/ion7-labs/ion7-doc/dispatches \
+            -d '{
+              "event_type": "docs",
+              "client_payload": {
+                "source": "ion7-core",
+                "ref":    "${{ github.ref_name }}"
+              }
+            }'

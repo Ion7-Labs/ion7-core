@@ -3,6 +3,9 @@ bridge/*.so
 bridge/*.dylib
 bridge/*.o
 
+# Release tarballs (output of `make tarball` / CI)
+dist/
+
 # LuaRocks
 *.rock
 *.rockspec.lock

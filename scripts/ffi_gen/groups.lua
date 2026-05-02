@@ -138,13 +138,21 @@ M.OPTIONAL_HEADERS = {
 }
 
 --- Preprocessor defines passed to clang to neutralise visibility / calling
---- convention macros that would otherwise pollute the AST.
+--- convention / restrict macros that would otherwise pollute the AST.
+---
+--- `GGML_RESTRICT` expands to `__restrict__` or similar by default, which
+--- clang then surfaces in `qualType` strings (e.g. `const void *restrict`).
+--- LuaJIT's `ffi.cdef` parser does not accept the `restrict` keyword, so
+--- we neutralise the macro at the source. The `restrict` substitution in
+--- `ast.clean_qualtype` is a defence-in-depth net for any other path that
+--- might re-introduce it.
 --- @type string[]
 M.CLANG_DEFINES = {
   "-DLLAMA_API=",
   "-DGGML_API=",
   "-DGGML_CALL=",
   "-DGGML_DEPRECATED(...)=",
+  "-DGGML_RESTRICT=",
 }
 
 --- Include-path subdirectories under `<vendor_root>/llama.cpp/` passed to

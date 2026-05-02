@@ -6,7 +6,10 @@
 local ffi = require "ffi"
 
 ffi.cdef[[
-  -- Forward declarations
+  /* Opaque system types (libc forwards) */
+  typedef struct __ion7_FILE FILE;
+
+  /* Forward declarations */
   struct ggml_object;
   struct ggml_context;
   struct ggml_cgraph;
@@ -28,13 +31,16 @@ ffi.cdef[[
   struct llama_memory_i;
   struct llama_adapter_lora;
 
-  -- Enums
+  /* Definitions (source order) */
+  typedef void (*ggml_abort_callback_t)(const char *);
   enum ggml_status {
       GGML_STATUS_ALLOC_FAILED = -2,
       GGML_STATUS_FAILED = -1,
       GGML_STATUS_SUCCESS = 0,
       GGML_STATUS_ABORTED = 1,
   };
+  typedef uint16_t ggml_fp16_t;
+  typedef struct ggml_bf16_t ggml_bf16_t;
   enum ggml_type {
       GGML_TYPE_F32 = 0,
       GGML_TYPE_F16 = 1,
@@ -107,141 +113,141 @@ ffi.cdef[[
   };
   enum ggml_op {
       GGML_OP_NONE = 0,
-      GGML_OP_DUP = 0,
-      GGML_OP_ADD = 0,
-      GGML_OP_ADD_ID = 0,
-      GGML_OP_ADD1 = 0,
-      GGML_OP_ACC = 0,
-      GGML_OP_SUB = 0,
-      GGML_OP_MUL = 0,
-      GGML_OP_DIV = 0,
-      GGML_OP_SQR = 0,
-      GGML_OP_SQRT = 0,
-      GGML_OP_LOG = 0,
-      GGML_OP_SIN = 0,
-      GGML_OP_COS = 0,
-      GGML_OP_SUM = 0,
-      GGML_OP_SUM_ROWS = 0,
-      GGML_OP_CUMSUM = 0,
-      GGML_OP_MEAN = 0,
-      GGML_OP_ARGMAX = 0,
-      GGML_OP_COUNT_EQUAL = 0,
-      GGML_OP_REPEAT = 0,
-      GGML_OP_REPEAT_BACK = 0,
-      GGML_OP_CONCAT = 0,
-      GGML_OP_SILU_BACK = 0,
-      GGML_OP_NORM = 0,
-      GGML_OP_RMS_NORM = 0,
-      GGML_OP_RMS_NORM_BACK = 0,
-      GGML_OP_GROUP_NORM = 0,
-      GGML_OP_L2_NORM = 0,
-      GGML_OP_MUL_MAT = 0,
-      GGML_OP_MUL_MAT_ID = 0,
-      GGML_OP_OUT_PROD = 0,
-      GGML_OP_SCALE = 0,
-      GGML_OP_SET = 0,
-      GGML_OP_CPY = 0,
-      GGML_OP_CONT = 0,
-      GGML_OP_RESHAPE = 0,
-      GGML_OP_VIEW = 0,
-      GGML_OP_PERMUTE = 0,
-      GGML_OP_TRANSPOSE = 0,
-      GGML_OP_GET_ROWS = 0,
-      GGML_OP_GET_ROWS_BACK = 0,
-      GGML_OP_SET_ROWS = 0,
-      GGML_OP_DIAG = 0,
-      GGML_OP_DIAG_MASK_INF = 0,
-      GGML_OP_DIAG_MASK_ZERO = 0,
-      GGML_OP_SOFT_MAX = 0,
-      GGML_OP_SOFT_MAX_BACK = 0,
-      GGML_OP_ROPE = 0,
-      GGML_OP_ROPE_BACK = 0,
-      GGML_OP_CLAMP = 0,
-      GGML_OP_CONV_TRANSPOSE_1D = 0,
-      GGML_OP_IM2COL = 0,
-      GGML_OP_IM2COL_BACK = 0,
-      GGML_OP_IM2COL_3D = 0,
-      GGML_OP_CONV_2D = 0,
-      GGML_OP_CONV_3D = 0,
-      GGML_OP_CONV_2D_DW = 0,
-      GGML_OP_CONV_TRANSPOSE_2D = 0,
-      GGML_OP_POOL_1D = 0,
-      GGML_OP_POOL_2D = 0,
-      GGML_OP_POOL_2D_BACK = 0,
-      GGML_OP_UPSCALE = 0,
-      GGML_OP_PAD = 0,
-      GGML_OP_PAD_REFLECT_1D = 0,
-      GGML_OP_ROLL = 0,
-      GGML_OP_ARANGE = 0,
-      GGML_OP_TIMESTEP_EMBEDDING = 0,
-      GGML_OP_ARGSORT = 0,
-      GGML_OP_TOP_K = 0,
-      GGML_OP_LEAKY_RELU = 0,
-      GGML_OP_TRI = 0,
-      GGML_OP_FILL = 0,
-      GGML_OP_FLASH_ATTN_EXT = 0,
-      GGML_OP_FLASH_ATTN_BACK = 0,
-      GGML_OP_SSM_CONV = 0,
-      GGML_OP_SSM_SCAN = 0,
-      GGML_OP_WIN_PART = 0,
-      GGML_OP_WIN_UNPART = 0,
-      GGML_OP_GET_REL_POS = 0,
-      GGML_OP_ADD_REL_POS = 0,
-      GGML_OP_RWKV_WKV6 = 0,
-      GGML_OP_GATED_LINEAR_ATTN = 0,
-      GGML_OP_RWKV_WKV7 = 0,
-      GGML_OP_SOLVE_TRI = 0,
-      GGML_OP_GATED_DELTA_NET = 0,
-      GGML_OP_UNARY = 0,
-      GGML_OP_MAP_CUSTOM1 = 0,
-      GGML_OP_MAP_CUSTOM2 = 0,
-      GGML_OP_MAP_CUSTOM3 = 0,
-      GGML_OP_CUSTOM = 0,
-      GGML_OP_CROSS_ENTROPY_LOSS = 0,
-      GGML_OP_CROSS_ENTROPY_LOSS_BACK = 0,
-      GGML_OP_OPT_STEP_ADAMW = 0,
-      GGML_OP_OPT_STEP_SGD = 0,
-      GGML_OP_GLU = 0,
-      GGML_OP_COUNT = 0,
+      GGML_OP_DUP,
+      GGML_OP_ADD,
+      GGML_OP_ADD_ID,
+      GGML_OP_ADD1,
+      GGML_OP_ACC,
+      GGML_OP_SUB,
+      GGML_OP_MUL,
+      GGML_OP_DIV,
+      GGML_OP_SQR,
+      GGML_OP_SQRT,
+      GGML_OP_LOG,
+      GGML_OP_SIN,
+      GGML_OP_COS,
+      GGML_OP_SUM,
+      GGML_OP_SUM_ROWS,
+      GGML_OP_CUMSUM,
+      GGML_OP_MEAN,
+      GGML_OP_ARGMAX,
+      GGML_OP_COUNT_EQUAL,
+      GGML_OP_REPEAT,
+      GGML_OP_REPEAT_BACK,
+      GGML_OP_CONCAT,
+      GGML_OP_SILU_BACK,
+      GGML_OP_NORM,
+      GGML_OP_RMS_NORM,
+      GGML_OP_RMS_NORM_BACK,
+      GGML_OP_GROUP_NORM,
+      GGML_OP_L2_NORM,
+      GGML_OP_MUL_MAT,
+      GGML_OP_MUL_MAT_ID,
+      GGML_OP_OUT_PROD,
+      GGML_OP_SCALE,
+      GGML_OP_SET,
+      GGML_OP_CPY,
+      GGML_OP_CONT,
+      GGML_OP_RESHAPE,
+      GGML_OP_VIEW,
+      GGML_OP_PERMUTE,
+      GGML_OP_TRANSPOSE,
+      GGML_OP_GET_ROWS,
+      GGML_OP_GET_ROWS_BACK,
+      GGML_OP_SET_ROWS,
+      GGML_OP_DIAG,
+      GGML_OP_DIAG_MASK_INF,
+      GGML_OP_DIAG_MASK_ZERO,
+      GGML_OP_SOFT_MAX,
+      GGML_OP_SOFT_MAX_BACK,
+      GGML_OP_ROPE,
+      GGML_OP_ROPE_BACK,
+      GGML_OP_CLAMP,
+      GGML_OP_CONV_TRANSPOSE_1D,
+      GGML_OP_IM2COL,
+      GGML_OP_IM2COL_BACK,
+      GGML_OP_IM2COL_3D,
+      GGML_OP_CONV_2D,
+      GGML_OP_CONV_3D,
+      GGML_OP_CONV_2D_DW,
+      GGML_OP_CONV_TRANSPOSE_2D,
+      GGML_OP_POOL_1D,
+      GGML_OP_POOL_2D,
+      GGML_OP_POOL_2D_BACK,
+      GGML_OP_UPSCALE,
+      GGML_OP_PAD,
+      GGML_OP_PAD_REFLECT_1D,
+      GGML_OP_ROLL,
+      GGML_OP_ARANGE,
+      GGML_OP_TIMESTEP_EMBEDDING,
+      GGML_OP_ARGSORT,
+      GGML_OP_TOP_K,
+      GGML_OP_LEAKY_RELU,
+      GGML_OP_TRI,
+      GGML_OP_FILL,
+      GGML_OP_FLASH_ATTN_EXT,
+      GGML_OP_FLASH_ATTN_BACK,
+      GGML_OP_SSM_CONV,
+      GGML_OP_SSM_SCAN,
+      GGML_OP_WIN_PART,
+      GGML_OP_WIN_UNPART,
+      GGML_OP_GET_REL_POS,
+      GGML_OP_ADD_REL_POS,
+      GGML_OP_RWKV_WKV6,
+      GGML_OP_GATED_LINEAR_ATTN,
+      GGML_OP_RWKV_WKV7,
+      GGML_OP_SOLVE_TRI,
+      GGML_OP_GATED_DELTA_NET,
+      GGML_OP_UNARY,
+      GGML_OP_MAP_CUSTOM1,
+      GGML_OP_MAP_CUSTOM2,
+      GGML_OP_MAP_CUSTOM3,
+      GGML_OP_CUSTOM,
+      GGML_OP_CROSS_ENTROPY_LOSS,
+      GGML_OP_CROSS_ENTROPY_LOSS_BACK,
+      GGML_OP_OPT_STEP_ADAMW,
+      GGML_OP_OPT_STEP_SGD,
+      GGML_OP_GLU,
+      GGML_OP_COUNT,
   };
   enum ggml_unary_op {
-      GGML_UNARY_OP_ABS = 0,
-      GGML_UNARY_OP_SGN = 0,
-      GGML_UNARY_OP_NEG = 0,
-      GGML_UNARY_OP_STEP = 0,
-      GGML_UNARY_OP_TANH = 0,
-      GGML_UNARY_OP_ELU = 0,
-      GGML_UNARY_OP_RELU = 0,
-      GGML_UNARY_OP_SIGMOID = 0,
-      GGML_UNARY_OP_GELU = 0,
-      GGML_UNARY_OP_GELU_QUICK = 0,
-      GGML_UNARY_OP_SILU = 0,
-      GGML_UNARY_OP_HARDSWISH = 0,
-      GGML_UNARY_OP_HARDSIGMOID = 0,
-      GGML_UNARY_OP_EXP = 0,
-      GGML_UNARY_OP_EXPM1 = 0,
-      GGML_UNARY_OP_SOFTPLUS = 0,
-      GGML_UNARY_OP_GELU_ERF = 0,
-      GGML_UNARY_OP_XIELU = 0,
-      GGML_UNARY_OP_FLOOR = 0,
-      GGML_UNARY_OP_CEIL = 0,
-      GGML_UNARY_OP_ROUND = 0,
-      GGML_UNARY_OP_TRUNC = 0,
-      GGML_UNARY_OP_COUNT = 0,
+      GGML_UNARY_OP_ABS,
+      GGML_UNARY_OP_SGN,
+      GGML_UNARY_OP_NEG,
+      GGML_UNARY_OP_STEP,
+      GGML_UNARY_OP_TANH,
+      GGML_UNARY_OP_ELU,
+      GGML_UNARY_OP_RELU,
+      GGML_UNARY_OP_SIGMOID,
+      GGML_UNARY_OP_GELU,
+      GGML_UNARY_OP_GELU_QUICK,
+      GGML_UNARY_OP_SILU,
+      GGML_UNARY_OP_HARDSWISH,
+      GGML_UNARY_OP_HARDSIGMOID,
+      GGML_UNARY_OP_EXP,
+      GGML_UNARY_OP_EXPM1,
+      GGML_UNARY_OP_SOFTPLUS,
+      GGML_UNARY_OP_GELU_ERF,
+      GGML_UNARY_OP_XIELU,
+      GGML_UNARY_OP_FLOOR,
+      GGML_UNARY_OP_CEIL,
+      GGML_UNARY_OP_ROUND,
+      GGML_UNARY_OP_TRUNC,
+      GGML_UNARY_OP_COUNT,
   };
   enum ggml_glu_op {
-      GGML_GLU_OP_REGLU = 0,
-      GGML_GLU_OP_GEGLU = 0,
-      GGML_GLU_OP_SWIGLU = 0,
-      GGML_GLU_OP_SWIGLU_OAI = 0,
-      GGML_GLU_OP_GEGLU_ERF = 0,
-      GGML_GLU_OP_GEGLU_QUICK = 0,
-      GGML_GLU_OP_COUNT = 0,
+      GGML_GLU_OP_REGLU,
+      GGML_GLU_OP_GEGLU,
+      GGML_GLU_OP_SWIGLU,
+      GGML_GLU_OP_SWIGLU_OAI,
+      GGML_GLU_OP_GEGLU_ERF,
+      GGML_GLU_OP_GEGLU_QUICK,
+      GGML_GLU_OP_COUNT,
   };
   enum ggml_object_type {
-      GGML_OBJECT_TYPE_TENSOR = 0,
-      GGML_OBJECT_TYPE_GRAPH = 0,
-      GGML_OBJECT_TYPE_WORK_BUFFER = 0,
+      GGML_OBJECT_TYPE_TENSOR,
+      GGML_OBJECT_TYPE_GRAPH,
+      GGML_OBJECT_TYPE_WORK_BUFFER,
   };
   enum ggml_log_level {
       GGML_LOG_LEVEL_NONE = 0,
@@ -264,44 +270,144 @@ ffi.cdef[[
       GGML_TRI_TYPE_LOWER_DIAG = 2,
       GGML_TRI_TYPE_LOWER = 3,
   };
+  struct ggml_init_params {
+      size_t mem_size;
+      void * mem_buffer;
+      bool no_alloc;
+  };
+  typedef struct ggml_init_params ggml_init_params;
+  struct ggml_tensor {
+      enum ggml_type type;
+      struct ggml_backend_buffer * buffer;
+      int64_t ne[4];
+      size_t nb[4];
+      enum ggml_op op;
+      int32_t op_params[16];
+      int32_t flags;
+      struct ggml_tensor * src[10];
+      struct ggml_tensor * view_src;
+      size_t view_offs;
+      void * data;
+      char name[64];
+      void * extra;
+      char padding[8];
+  };
+  typedef struct ggml_tensor ggml_tensor;
+  typedef bool (*ggml_abort_callback)(void *);
+  typedef uint8_t ggml_guid[16];
+  typedef ggml_guid * ggml_guid_t;
   enum ggml_op_pool {
-      GGML_OP_POOL_MAX = 0,
-      GGML_OP_POOL_AVG = 0,
-      GGML_OP_POOL_COUNT = 0,
+      GGML_OP_POOL_MAX,
+      GGML_OP_POOL_AVG,
+      GGML_OP_POOL_COUNT,
   };
   enum ggml_scale_mode {
       GGML_SCALE_MODE_NEAREST = 0,
       GGML_SCALE_MODE_BILINEAR = 1,
       GGML_SCALE_MODE_BICUBIC = 2,
-      GGML_SCALE_MODE_COUNT = 0,
+      GGML_SCALE_MODE_COUNT,
   };
   enum ggml_scale_flag {
       GGML_SCALE_FLAG_ALIGN_CORNERS = 256,
       GGML_SCALE_FLAG_ANTIALIAS = 512,
   };
   enum ggml_sort_order {
-      GGML_SORT_ORDER_ASC = 0,
-      GGML_SORT_ORDER_DESC = 0,
+      GGML_SORT_ORDER_ASC,
+      GGML_SORT_ORDER_DESC,
   };
+  typedef void (*ggml_custom1_op_t)(struct ggml_tensor *, const struct ggml_tensor *, int, int, void *);
+  typedef void (*ggml_custom2_op_t)(struct ggml_tensor *, const struct ggml_tensor *, const struct ggml_tensor *, int, int, void *);
+  typedef void (*ggml_custom3_op_t)(struct ggml_tensor *, const struct ggml_tensor *, const struct ggml_tensor *, const struct ggml_tensor *, int, int, void *);
+  typedef void (*ggml_custom_op_t)(struct ggml_tensor *, int, int, void *);
+  typedef void (*ggml_log_callback)(enum ggml_log_level, const char *, void *);
+  typedef void (*ggml_to_float_t)(const void * , float * , int64_t);
+  typedef void (*ggml_from_float_t)(const float * , void * , int64_t);
+  struct ggml_type_traits {
+      const char * type_name;
+      int64_t blck_size;
+      int64_t blck_size_interleave;
+      size_t type_size;
+      bool is_quantized;
+      ggml_to_float_t to_float;
+      ggml_from_float_t from_float_ref;
+  };
+  typedef struct ggml_type_traits ggml_type_traits;
   enum ggml_sched_priority {
       GGML_SCHED_PRIO_LOW = -1,
-      GGML_SCHED_PRIO_NORMAL = 0,
-      GGML_SCHED_PRIO_MEDIUM = 0,
-      GGML_SCHED_PRIO_HIGH = 0,
-      GGML_SCHED_PRIO_REALTIME = 0,
+      GGML_SCHED_PRIO_NORMAL,
+      GGML_SCHED_PRIO_MEDIUM,
+      GGML_SCHED_PRIO_HIGH,
+      GGML_SCHED_PRIO_REALTIME,
   };
+  struct ggml_threadpool_params {
+      bool cpumask[512];
+      int n_threads;
+      enum ggml_sched_priority prio;
+      uint32_t poll;
+      bool strict_cpu;
+      bool paused;
+  };
+  typedef struct ggml_threadpool_params ggml_threadpool_params;
+  typedef struct ggml_threadpool * ggml_threadpool_t;
+  typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
+  typedef struct ggml_backend_buffer * ggml_backend_buffer_t;
+  typedef struct ggml_backend * ggml_backend_t;
+  struct ggml_tallocr {
+      ggml_backend_buffer_t buffer;
+      void * base;
+      size_t alignment;
+      size_t offset;
+  };
+  typedef struct ggml_tallocr ggml_tallocr;
+  typedef struct ggml_gallocr * ggml_gallocr_t;
+  typedef struct ggml_backend_event * ggml_backend_event_t;
+  typedef void * ggml_backend_graph_plan_t;
+  typedef struct ggml_backend_reg * ggml_backend_reg_t;
+  typedef struct ggml_backend_device * ggml_backend_dev_t;
   enum ggml_backend_buffer_usage {
       GGML_BACKEND_BUFFER_USAGE_ANY = 0,
       GGML_BACKEND_BUFFER_USAGE_WEIGHTS = 1,
       GGML_BACKEND_BUFFER_USAGE_COMPUTE = 2,
   };
   enum ggml_backend_dev_type {
-      GGML_BACKEND_DEVICE_TYPE_CPU = 0,
-      GGML_BACKEND_DEVICE_TYPE_GPU = 0,
-      GGML_BACKEND_DEVICE_TYPE_IGPU = 0,
-      GGML_BACKEND_DEVICE_TYPE_ACCEL = 0,
-      GGML_BACKEND_DEVICE_TYPE_META = 0,
+      GGML_BACKEND_DEVICE_TYPE_CPU,
+      GGML_BACKEND_DEVICE_TYPE_GPU,
+      GGML_BACKEND_DEVICE_TYPE_IGPU,
+      GGML_BACKEND_DEVICE_TYPE_ACCEL,
+      GGML_BACKEND_DEVICE_TYPE_META,
   };
+  struct ggml_backend_dev_caps {
+      bool async;
+      bool host_buffer;
+      bool buffer_from_host_ptr;
+      bool events;
+  };
+  typedef struct ggml_backend_dev_caps ggml_backend_dev_caps;
+  struct ggml_backend_dev_props {
+      const char * name;
+      const char * description;
+      size_t memory_free;
+      size_t memory_total;
+      enum ggml_backend_dev_type type;
+      const char * device_id;
+      struct ggml_backend_dev_caps caps;
+  };
+  typedef struct ggml_backend_dev_props ggml_backend_dev_props;
+  typedef void *(*ggml_backend_comm_init_t)(ggml_backend_t *, size_t);
+  typedef void (*ggml_backend_comm_free_t)(void *);
+  typedef bool (*ggml_backend_comm_allreduce_tensor_t)(void *, struct ggml_tensor **);
+  typedef ggml_backend_buffer_type_t (*ggml_backend_split_buffer_type_t)(int, const float *);
+  typedef void (*ggml_backend_set_n_threads_t)(ggml_backend_t, int);
+  typedef ggml_backend_buffer_type_t *(*ggml_backend_dev_get_extra_bufts_t)(ggml_backend_dev_t);
+  typedef void (*ggml_backend_set_abort_callback_t)(ggml_backend_t, ggml_abort_callback, void *);
+  struct ggml_backend_feature {
+      const char * name;
+      const char * value;
+  };
+  typedef struct ggml_backend_feature ggml_backend_feature;
+  typedef struct ggml_backend_feature *(*ggml_backend_get_features_t)(ggml_backend_reg_t);
+  typedef struct ggml_backend_sched * ggml_backend_sched_t;
+  typedef bool (*ggml_backend_sched_eval_callback)(struct ggml_tensor *, bool, void *);
   enum ggml_backend_meta_split_axis {
       GGML_BACKEND_SPLIT_AXIS_0 = 0,
       GGML_BACKEND_SPLIT_AXIS_1 = 1,
@@ -312,19 +418,55 @@ ffi.cdef[[
       GGML_BACKEND_SPLIT_AXIS_NONE = 98,
       GGML_BACKEND_SPLIT_AXIS_UNKNOWN = 99,
   };
+  struct ggml_backend_meta_split_state {
+      enum ggml_backend_meta_split_axis axis;
+      int64_t ne[256];
+      uint32_t n_segments;
+  };
+  typedef struct ggml_backend_meta_split_state ggml_backend_meta_split_state;
+  typedef struct ggml_backend_meta_split_state (*ggml_backend_meta_get_split_state_t)(const struct ggml_tensor *, void *);
+  struct ggml_backend_graph_copy {
+      ggml_backend_buffer_t buffer;
+      struct ggml_context * ctx_allocated;
+      struct ggml_context * ctx_unallocated;
+      struct ggml_cgraph * graph;
+  };
+  typedef struct ggml_backend_graph_copy ggml_backend_graph_copy;
+  typedef bool (*ggml_backend_eval_callback)(int, struct ggml_tensor *, struct ggml_tensor *, void *);
+  struct ggml_cplan {
+      size_t work_size;
+      uint8_t * work_data;
+      int n_threads;
+      struct ggml_threadpool * threadpool;
+      ggml_abort_callback abort_callback;
+      void * abort_callback_data;
+      bool use_ref;
+  };
+  typedef struct ggml_cplan ggml_cplan;
   enum ggml_numa_strategy {
       GGML_NUMA_STRATEGY_DISABLED = 0,
       GGML_NUMA_STRATEGY_DISTRIBUTE = 1,
       GGML_NUMA_STRATEGY_ISOLATE = 2,
       GGML_NUMA_STRATEGY_NUMACTL = 3,
       GGML_NUMA_STRATEGY_MIRROR = 4,
-      GGML_NUMA_STRATEGY_COUNT = 0,
+      GGML_NUMA_STRATEGY_COUNT,
   };
+  typedef void (*ggml_vec_dot_t)(int, float * , size_t, const void * , size_t, const void * , size_t, int);
+  struct ggml_type_traits_cpu {
+      ggml_from_float_t from_float;
+      ggml_vec_dot_t vec_dot;
+      enum ggml_type vec_dot_type;
+      int64_t nrows;
+  };
+  typedef struct ggml_type_traits_cpu ggml_type_traits_cpu;
+  typedef struct ggml_opt_dataset * ggml_opt_dataset_t;
+  typedef struct ggml_opt_context * ggml_opt_context_t;
+  typedef struct ggml_opt_result * ggml_opt_result_t;
   enum ggml_opt_loss_type {
-      GGML_OPT_LOSS_TYPE_MEAN = 0,
-      GGML_OPT_LOSS_TYPE_SUM = 0,
-      GGML_OPT_LOSS_TYPE_CROSS_ENTROPY = 0,
-      GGML_OPT_LOSS_TYPE_MEAN_SQUARED_ERROR = 0,
+      GGML_OPT_LOSS_TYPE_MEAN,
+      GGML_OPT_LOSS_TYPE_SUM,
+      GGML_OPT_LOSS_TYPE_CROSS_ENTROPY,
+      GGML_OPT_LOSS_TYPE_MEAN_SQUARED_ERROR,
   };
   enum ggml_opt_build_type {
       GGML_OPT_BUILD_TYPE_FORWARD = 10,
@@ -332,10 +474,39 @@ ffi.cdef[[
       GGML_OPT_BUILD_TYPE_OPT = 30,
   };
   enum ggml_opt_optimizer_type {
-      GGML_OPT_OPTIMIZER_TYPE_ADAMW = 0,
-      GGML_OPT_OPTIMIZER_TYPE_SGD = 0,
-      GGML_OPT_OPTIMIZER_TYPE_COUNT = 0,
+      GGML_OPT_OPTIMIZER_TYPE_ADAMW,
+      GGML_OPT_OPTIMIZER_TYPE_SGD,
+      GGML_OPT_OPTIMIZER_TYPE_COUNT,
   };
+  struct ggml_opt_optimizer_params {
+      struct {
+          float alpha;
+          float beta1;
+          float beta2;
+          float eps;
+          float wd;
+      } adamw;
+      struct {
+          float alpha;
+          float wd;
+      } sgd;
+  };
+  typedef struct ggml_opt_optimizer_params ggml_opt_optimizer_params;
+  typedef struct ggml_opt_optimizer_params (*ggml_opt_get_optimizer_params)(void *);
+  struct ggml_opt_params {
+      ggml_backend_sched_t backend_sched;
+      struct ggml_context * ctx_compute;
+      struct ggml_tensor * inputs;
+      struct ggml_tensor * outputs;
+      enum ggml_opt_loss_type loss_type;
+      enum ggml_opt_build_type build_type;
+      int32_t opt_period;
+      ggml_opt_get_optimizer_params get_opt_pars;
+      void * get_opt_pars_ud;
+      enum ggml_opt_optimizer_type optimizer;
+  };
+  typedef struct ggml_opt_params ggml_opt_params;
+  typedef void (*ggml_opt_epoch_callback)(bool, ggml_opt_context_t, ggml_opt_dataset_t, ggml_opt_result_t, int64_t, int64_t, int64_t);
   enum gguf_type {
       GGUF_TYPE_UINT8 = 0,
       GGUF_TYPE_INT8 = 1,
@@ -350,8 +521,17 @@ ffi.cdef[[
       GGUF_TYPE_UINT64 = 10,
       GGUF_TYPE_INT64 = 11,
       GGUF_TYPE_FLOAT64 = 12,
-      GGUF_TYPE_COUNT = 0,
+      GGUF_TYPE_COUNT,
   };
+  struct gguf_init_params {
+      bool no_alloc;
+      struct ggml_context ** ctx;
+  };
+  typedef struct gguf_init_params gguf_init_params;
+  typedef struct llama_memory_i * llama_memory_t;
+  typedef int32_t llama_pos;
+  typedef int32_t llama_token;
+  typedef int32_t llama_seq_id;
   enum llama_vocab_type {
       LLAMA_VOCAB_TYPE_NONE = 0,
       LLAMA_VOCAB_TYPE_SPM = 1,
@@ -461,148 +641,20 @@ ffi.cdef[[
       LLAMA_SPLIT_MODE_ROW = 2,
       LLAMA_SPLIT_MODE_TENSOR = 3,
   };
-  enum llama_model_kv_override_type {
-      LLAMA_KV_OVERRIDE_TYPE_INT = 0,
-      LLAMA_KV_OVERRIDE_TYPE_FLOAT = 0,
-      LLAMA_KV_OVERRIDE_TYPE_BOOL = 0,
-      LLAMA_KV_OVERRIDE_TYPE_STR = 0,
-  };
-  enum llama_model_meta_key {
-      LLAMA_MODEL_META_KEY_SAMPLING_SEQUENCE = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_TOP_K = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_TOP_P = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_MIN_P = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_XTC_PROBABILITY = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_XTC_THRESHOLD = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_TEMP = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_LAST_N = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_REPEAT = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_TAU = 0,
-      LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_ETA = 0,
-  };
-
-  -- Structs
-  struct ggml_init_params {
-      size_t mem_size;
-      void * mem_buffer;
-      bool no_alloc;
-  };
-  struct ggml_tensor {
-      enum ggml_type type;
-      struct ggml_backend_buffer * buffer;
-      int64_t ne[4];
-      size_t nb[4];
-      enum ggml_op op;
-      int32_t op_params[16];
-      int32_t flags;
-      struct ggml_tensor * src[10];
-      struct ggml_tensor * view_src;
-      size_t view_offs;
-      void * data;
-      char name[64];
-      void * extra;
-      char padding[8];
-  };
-  struct ggml_type_traits {
-      const char * type_name;
-      int64_t blck_size;
-      int64_t blck_size_interleave;
-      size_t type_size;
-      bool is_quantized;
-      ggml_to_float_t to_float;
-      ggml_from_float_t from_float_ref;
-  };
-  struct ggml_threadpool_params {
-      bool cpumask[512];
-      int n_threads;
-      enum ggml_sched_priority prio;
-      uint32_t poll;
-      bool strict_cpu;
-      bool paused;
-  };
-  struct ggml_tallocr {
-      ggml_backend_buffer_t buffer;
-      void * base;
-      size_t alignment;
-      size_t offset;
-  };
-  struct ggml_backend_dev_caps {
-      bool async;
-      bool host_buffer;
-      bool buffer_from_host_ptr;
-      bool events;
-  };
-  struct ggml_backend_dev_props {
-      const char * name;
-      const char * description;
-      size_t memory_free;
-      size_t memory_total;
-      enum ggml_backend_dev_type type;
-      const char * device_id;
-      struct ggml_backend_dev_caps caps;
-  };
-  struct ggml_backend_feature {
-      const char * name;
-      const char * value;
-  };
-  struct ggml_backend_meta_split_state {
-      enum ggml_backend_meta_split_axis axis;
-      int64_t ne[256];
-      uint32_t n_segments;
-  };
-  struct ggml_backend_graph_copy {
-      ggml_backend_buffer_t buffer;
-      struct ggml_context * ctx_allocated;
-      struct ggml_context * ctx_unallocated;
-      struct ggml_cgraph * graph;
-  };
-  struct ggml_cplan {
-      size_t work_size;
-      uint8_t * work_data;
-      int n_threads;
-      struct ggml_threadpool * threadpool;
-      ggml_abort_callback abort_callback;
-      void * abort_callback_data;
-      bool use_ref;
-  };
-  struct ggml_type_traits_cpu {
-      ggml_from_float_t from_float;
-      ggml_vec_dot_t vec_dot;
-      enum ggml_type vec_dot_type;
-      int64_t nrows;
-  };
-  struct ggml_opt_optimizer_params {
-      struct (unnamed at scripts/../vendor/llama.cpp/ggml/include/ggml-opt.h:86:9) adamw;
-      struct (unnamed at scripts/../vendor/llama.cpp/ggml/include/ggml-opt.h:93:9) sgd;
-  };
-  struct ggml_opt_params {
-      ggml_backend_sched_t backend_sched;
-      struct ggml_context * ctx_compute;
-      struct ggml_tensor * inputs;
-      struct ggml_tensor * outputs;
-      enum ggml_opt_loss_type loss_type;
-      enum ggml_opt_build_type build_type;
-      int32_t opt_period;
-      ggml_opt_get_optimizer_params get_opt_pars;
-      void * get_opt_pars_ud;
-      enum ggml_opt_optimizer_type optimizer;
-  };
-  struct gguf_init_params {
-      bool no_alloc;
-      struct ggml_context ** ctx;
-  };
   struct llama_token_data {
       llama_token id;
       float logit;
       float p;
   };
+  typedef struct llama_token_data llama_token_data;
   struct llama_token_data_array {
       llama_token_data * data;
       size_t size;
       int64_t selected;
       bool sorted;
   };
+  typedef struct llama_token_data_array llama_token_data_array;
+  typedef bool (*llama_progress_callback)(float, void *);
   struct llama_batch {
       int32_t n_tokens;
       llama_token * token;
@@ -612,15 +664,43 @@ ffi.cdef[[
       llama_seq_id ** seq_id;
       int8_t * logits;
   };
+  typedef struct llama_batch llama_batch;
+  enum llama_model_kv_override_type {
+      LLAMA_KV_OVERRIDE_TYPE_INT,
+      LLAMA_KV_OVERRIDE_TYPE_FLOAT,
+      LLAMA_KV_OVERRIDE_TYPE_BOOL,
+      LLAMA_KV_OVERRIDE_TYPE_STR,
+  };
+  enum llama_model_meta_key {
+      LLAMA_MODEL_META_KEY_SAMPLING_SEQUENCE,
+      LLAMA_MODEL_META_KEY_SAMPLING_TOP_K,
+      LLAMA_MODEL_META_KEY_SAMPLING_TOP_P,
+      LLAMA_MODEL_META_KEY_SAMPLING_MIN_P,
+      LLAMA_MODEL_META_KEY_SAMPLING_XTC_PROBABILITY,
+      LLAMA_MODEL_META_KEY_SAMPLING_XTC_THRESHOLD,
+      LLAMA_MODEL_META_KEY_SAMPLING_TEMP,
+      LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_LAST_N,
+      LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_REPEAT,
+      LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT,
+      LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_TAU,
+      LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_ETA,
+  };
   struct llama_model_kv_override {
       enum llama_model_kv_override_type tag;
       char key[128];
-      union llama_model_kv_override::(anonymous at scripts/../vendor/llama.cpp/include/llama.h:273:9) _unnamed;
+      union {
+          int64_t val_i64;
+          double val_f64;
+          bool val_bool;
+          char val_str[128];
+      };
   };
+  typedef struct llama_model_kv_override llama_model_kv_override;
   struct llama_model_tensor_buft_override {
       const char * pattern;
       ggml_backend_buffer_type_t buft;
   };
+  typedef struct llama_model_tensor_buft_override llama_model_tensor_buft_override;
   struct llama_model_params {
       ggml_backend_dev_t * devices;
       const struct llama_model_tensor_buft_override * tensor_buft_overrides;
@@ -640,10 +720,12 @@ ffi.cdef[[
       bool no_host;
       bool no_alloc;
   };
+  typedef struct llama_model_params llama_model_params;
   struct llama_sampler_seq_config {
       llama_seq_id seq_id;
       struct llama_sampler * sampler;
   };
+  typedef struct llama_sampler_seq_config llama_sampler_seq_config;
   struct llama_context_params {
       uint32_t n_ctx;
       uint32_t n_batch;
@@ -678,15 +760,18 @@ ffi.cdef[[
       struct llama_sampler_seq_config * samplers;
       size_t n_samplers;
   };
+  typedef struct llama_context_params llama_context_params;
   struct llama_model_tensor_override {
       const char * pattern;
       enum ggml_type type;
   };
+  typedef struct llama_model_tensor_override llama_model_tensor_override;
   struct llama_model_imatrix_data {
       const char * name;
       const float * data;
       size_t size;
   };
+  typedef struct llama_model_imatrix_data llama_model_imatrix_data;
   struct llama_model_quantize_params {
       int32_t nthread;
       enum llama_ftype ftype;
@@ -703,39 +788,49 @@ ffi.cdef[[
       const struct llama_model_tensor_override * tt_overrides;
       const int32_t * prune_layers;
   };
+  typedef struct llama_model_quantize_params llama_model_quantize_params;
   struct llama_logit_bias {
       llama_token token;
       float bias;
   };
+  typedef struct llama_logit_bias llama_logit_bias;
   struct llama_sampler_chain_params {
       bool no_perf;
   };
+  typedef struct llama_sampler_chain_params llama_sampler_chain_params;
   struct llama_chat_message {
       const char * role;
       const char * content;
   };
+  typedef struct llama_chat_message llama_chat_message;
+  typedef void (*llama_model_set_tensor_data_t)(struct ggml_tensor *, void *);
+  typedef uint32_t llama_state_seq_flags;
+  typedef void * llama_sampler_context_t;
   struct llama_sampler_data {
       struct ggml_tensor * logits;
       struct ggml_tensor * probs;
       struct ggml_tensor * sampled;
       struct ggml_tensor * candidates;
   };
+  typedef struct llama_sampler_data llama_sampler_data;
   struct llama_sampler_i {
-      const char *(*)(const struct llama_sampler *) name;
-      void (*)(struct llama_sampler *, llama_token) accept;
-      void (*)(struct llama_sampler *, llama_token_data_array *) apply;
-      void (*)(struct llama_sampler *) reset;
-      struct llama_sampler *(*)(const struct llama_sampler *) clone;
-      void (*)(struct llama_sampler *) free;
-      bool (*)(struct llama_sampler *, ggml_backend_buffer_type_t) backend_init;
-      void (*)(struct llama_sampler *, struct ggml_context *, struct ggml_cgraph *, struct ggml_tensor *) backend_accept;
-      void (*)(struct llama_sampler *, struct ggml_context *, struct ggml_cgraph *, struct llama_sampler_data *) backend_apply;
-      void (*)(struct llama_sampler *) backend_set_input;
+      const char *(*name)(const struct llama_sampler *);
+      void (*accept)(struct llama_sampler *, llama_token);
+      void (*apply)(struct llama_sampler *, llama_token_data_array *);
+      void (*reset)(struct llama_sampler *);
+      struct llama_sampler *(*clone)(const struct llama_sampler *);
+      void (*free)(struct llama_sampler *);
+      bool (*backend_init)(struct llama_sampler *, ggml_backend_buffer_type_t);
+      void (*backend_accept)(struct llama_sampler *, struct ggml_context *, struct ggml_cgraph *, struct ggml_tensor *);
+      void (*backend_apply)(struct llama_sampler *, struct ggml_context *, struct ggml_cgraph *, struct llama_sampler_data *);
+      void (*backend_set_input)(struct llama_sampler *);
   };
+  typedef struct llama_sampler_i llama_sampler_i;
   struct llama_sampler {
       struct llama_sampler_i * iface;
       llama_sampler_context_t ctx;
   };
+  typedef struct llama_sampler llama_sampler;
   struct llama_perf_context_data {
       double t_start_ms;
       double t_load_ms;
@@ -745,10 +840,13 @@ ffi.cdef[[
       int32_t n_eval;
       int32_t n_reused;
   };
+  typedef struct llama_perf_context_data llama_perf_context_data;
   struct llama_perf_sampler_data {
       double t_sample_ms;
       int32_t n_sample;
   };
+  typedef struct llama_perf_sampler_data llama_perf_sampler_data;
+  typedef bool (*llama_opt_param_filter)(const struct ggml_tensor *, void *);
   struct llama_opt_params {
       uint32_t n_ctx_train;
       llama_opt_param_filter param_filter;
@@ -757,64 +855,7 @@ ffi.cdef[[
       void * get_opt_pars_ud;
       enum ggml_opt_optimizer_type optimizer_type;
   };
-
-  -- Typedefs
-  typedef void (*)(const char *) ggml_abort_callback_t;
-  typedef uint16_t ggml_fp16_t;
-  typedef struct ggml_bf16_t ggml_bf16_t;
-  typedef bool (*)(void *) ggml_abort_callback;
-  typedef uint8_t[16] ggml_guid;
-  typedef ggml_guid * ggml_guid_t;
-  typedef void (*)(struct ggml_tensor *, const struct ggml_tensor *, int, int, void *) ggml_custom1_op_t;
-  typedef void (*)(struct ggml_tensor *, const struct ggml_tensor *, const struct ggml_tensor *, int, int, void *) ggml_custom2_op_t;
-  typedef void (*)(struct ggml_tensor *, const struct ggml_tensor *, const struct ggml_tensor *, const struct ggml_tensor *, int, int, void *) ggml_custom3_op_t;
-  typedef void (*)(struct ggml_tensor *, int, int, void *) ggml_custom_op_t;
-  typedef void (*)(enum ggml_log_level, const char *, void *) ggml_log_callback;
-  typedef void (*)(const void *restrict, float *restrict, int64_t) ggml_to_float_t;
-  typedef void (*)(const float *restrict, void *restrict, int64_t) ggml_from_float_t;
-  typedef struct ggml_threadpool * ggml_threadpool_t;
-  typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
-  typedef struct ggml_backend_buffer * ggml_backend_buffer_t;
-  typedef struct ggml_backend * ggml_backend_t;
-  typedef struct ggml_gallocr * ggml_gallocr_t;
-  typedef struct ggml_backend_event * ggml_backend_event_t;
-  typedef void * ggml_backend_graph_plan_t;
-  typedef struct ggml_backend_reg * ggml_backend_reg_t;
-  typedef struct ggml_backend_device * ggml_backend_dev_t;
-  typedef void *(*)(ggml_backend_t *, size_t) ggml_backend_comm_init_t;
-  typedef void (*)(void *) ggml_backend_comm_free_t;
-  typedef bool (*)(void *, struct ggml_tensor **) ggml_backend_comm_allreduce_tensor_t;
-  typedef ggml_backend_buffer_type_t (*)(int, const float *) ggml_backend_split_buffer_type_t;
-  typedef void (*)(ggml_backend_t, int) ggml_backend_set_n_threads_t;
-  typedef ggml_backend_buffer_type_t *(*)(ggml_backend_dev_t) ggml_backend_dev_get_extra_bufts_t;
-  typedef void (*)(ggml_backend_t, ggml_abort_callback, void *) ggml_backend_set_abort_callback_t;
-  typedef struct ggml_backend_feature *(*)(ggml_backend_reg_t) ggml_backend_get_features_t;
-  typedef struct ggml_backend_sched * ggml_backend_sched_t;
-  typedef bool (*)(struct ggml_tensor *, bool, void *) ggml_backend_sched_eval_callback;
-  typedef struct ggml_backend_meta_split_state (*)(const struct ggml_tensor *, void *) ggml_backend_meta_get_split_state_t;
-  typedef bool (*)(int, struct ggml_tensor *, struct ggml_tensor *, void *) ggml_backend_eval_callback;
-  typedef void (*)(int, float *restrict, size_t, const void *restrict, size_t, const void *restrict, size_t, int) ggml_vec_dot_t;
-  typedef struct ggml_opt_dataset * ggml_opt_dataset_t;
-  typedef struct ggml_opt_context * ggml_opt_context_t;
-  typedef struct ggml_opt_result * ggml_opt_result_t;
-  typedef struct ggml_opt_optimizer_params (*)(void *) ggml_opt_get_optimizer_params;
-  typedef void (*)(bool, ggml_opt_context_t, ggml_opt_dataset_t, ggml_opt_result_t, int64_t, int64_t, int64_t) ggml_opt_epoch_callback;
-  typedef struct llama_memory_i * llama_memory_t;
-  typedef int32_t llama_pos;
-  typedef int32_t llama_token;
-  typedef int32_t llama_seq_id;
-  typedef struct llama_token_data llama_token_data;
-  typedef struct llama_token_data_array llama_token_data_array;
-  typedef bool (*)(float, void *) llama_progress_callback;
-  typedef struct llama_batch llama_batch;
-  typedef struct llama_model_quantize_params llama_model_quantize_params;
-  typedef struct llama_logit_bias llama_logit_bias;
-  typedef struct llama_sampler_chain_params llama_sampler_chain_params;
-  typedef struct llama_chat_message llama_chat_message;
-  typedef void (*)(struct ggml_tensor *, void *) llama_model_set_tensor_data_t;
-  typedef uint32_t llama_state_seq_flags;
-  typedef void * llama_sampler_context_t;
-  typedef bool (*)(const struct ggml_tensor *, void *) llama_opt_param_filter;
+  typedef struct llama_opt_params llama_opt_params;
 ]]
 
 -- types.lua does NOT load any native lib — it only declares.

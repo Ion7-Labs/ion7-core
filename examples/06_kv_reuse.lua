@@ -1,135 +1,197 @@
 #!/usr/bin/env luajit
---- 06_kv_reuse.lua - KV cache reuse patterns for efficiency.
+--- @example examples.06_kv_reuse
+--- @author  ion7 / Ion7 Project Contributors
 ---
---- Demonstrates three KV cache techniques:
----   1. Snapshot/restore  - save and restore conversation state
----   2. Sequence forking  - branch a conversation into parallel paths
----   3. Sliding window    - keep context under control for long sessions
+--- ════════════════════════════════════════════════════════════════════════
+--- 06 — KV cache reuse : snapshots, sequence forking, sliding window
+--- ════════════════════════════════════════════════════════════════════════
 ---
---- Usage:
+--- A long system prompt (or a long shared chat history) is expensive
+--- to prefill but cheap to reuse. Three patterns covered here :
+---
+---   1. Snapshot / restore   : serialise the cache to a Lua string,
+---                             reuse it later or in a different ctx.
+---   2. Sequence forking     : duplicate seq 0 onto seq 1 so two
+---                             samplers can branch from the same prefix
+---                             without re-running the prefill.
+---   3. Sliding window       : when n_past approaches n_ctx, shift
+---                             old tokens out of the cache to free
+---                             room. Only works on models whose KV
+---                             reports `kv_can_shift() = true`.
+---
 ---   ION7_MODEL=/path/to/model.gguf luajit examples/06_kv_reuse.lua
 
 package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
 
-local ion7 = require "ion7.core"
+local MODEL = os.getenv("ION7_MODEL") or
+    error("Set ION7_MODEL=/path/to/model.gguf", 0)
 
+local ion7 = require "ion7.core"
 ion7.init({ log_level = 0 })
 
-local MODEL = assert(os.getenv("ION7_MODEL"), "Set ION7_MODEL=/path/to/model.gguf")
 local fit   = ion7.Model.fit_params(MODEL)
-local model  = ion7.Model.load(MODEL, { n_gpu_layers = fit and fit.n_gpu_layers or 0 })
-local vocab  = model:vocab()
-local ctx    = model:context({ n_ctx = 2048, n_seq_max = 4 })
-local sampler = ion7.Sampler.chain():top_k(1):dist(42):build(vocab)
+local model = ion7.Model.load(MODEL, {
+    n_gpu_layers = fit and fit.n_gpu_layers or 0,
+})
+local vocab = model:vocab()
 
-local function prefill(text, seq_id)
-    local msgs    = { { role = "user", content = text } }
-    local fmt     = vocab:apply_template(msgs, true)
-    local toks, n = vocab:tokenize(fmt, false, true)
-    ctx:decode(toks, n, seq_id or 0, 0)
-    return n
-end
+-- n_seq_max ≥ 2 so we can fork into a second sequence in demo 2.
+local ctx = model:context({ n_ctx = 4096, n_seq_max = 4 })
 
-local function gen(max, seq_id)
+--- Greedy generator helper. Operates on `seq_id`, returns the trimmed
+--- text and stops on EOG / max_gen.
+local function gen(seq_id, max_gen, sampler)
     sampler:reset()
-    local parts = {}
-    for _ = 1, max do
+    local pieces = {}
+    for _ = 1, max_gen do
         local tok = sampler:sample(ctx:ptr(), -1)
         if vocab:is_eog(tok) then break end
-        parts[#parts+1] = vocab:piece(tok, true)
-        ctx:decode_single(tok, seq_id or 0)
+        pieces[#pieces + 1] = vocab:piece(tok)
+        ctx:decode_single(tok, seq_id)
     end
-    return table.concat(parts):match("^%s*(.-)%s*$")
+    return (table.concat(pieces):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
--- ── 1. Snapshot / restore ────────────────────────────────────────────────────
--- Useful for: saving a conversation checkpoint, branch-and-compare,
--- retrying with a different sampler.
+local greedy = ion7.Sampler.greedy()
 
-io.write("\n[1. Snapshot / restore]\n")
+-- ════════════════════════════════════════════════════════════════════════
+-- 1. Snapshot / restore
+-- ════════════════════════════════════════════════════════════════════════
+--
+-- Run a prefill, snapshot the state, restore later, verify the
+-- restored context picks up exactly where the snapshot left off.
+-- Greedy sampling makes the test deterministic — both runs must agree.
 
-ctx:kv_clear()
-prefill("The capital of France is", 0)
-local response1 = gen(20, 0)
-io.write("  First generation:    " .. response1 .. "\n")
-
--- Save state after the question is processed
-local t0 = ion7.time_us()
-local blob = ctx:snapshot()
-local snap_ms = (ion7.time_us() - t0) / 1000
-
-io.write(string.format("  Snapshot: %.1f KB in %.2f ms\n", #blob / 1024, snap_ms))
-
--- Restore and re-generate - should produce the same output (same KV = same context)
-ctx:restore(blob)
-local response2 = gen(20, 0)
-io.write("  After restore:       " .. response2 .. "\n")
-io.write("  Match: " .. tostring(response1 == response2) .. "\n")
-
--- ── 2. Sequence forking ───────────────────────────────────────────────────────
--- Useful for: beam search, parallel exploration of conversation branches,
--- A/B testing different continuations from the same context.
-
-io.write("\n[2. Sequence forking]\n")
+print("\n[1] Snapshot / restore")
 
 ctx:kv_clear()
-prefill("List three programming languages:", 0)
+local prompt = vocab:apply_template(
+    { { role = "user", content = "The capital of France is" } }, true, -1)
+local toks, n = vocab:tokenize(prompt, false, true)
+ctx:decode(toks, n)
 
--- Fork sequence 0 into sequences 1 and 2
+-- We need a probe-decode AFTER snapshot so each side regenerates its
+-- logits buffer (snapshots do not carry logits — those are recomputed
+-- on the next decode). We sample the FIRST token now to anchor the
+-- comparison.
+local first_tok = greedy:sample(ctx:ptr(), -1)
+print(string.format("  next-token after prefill : %d (%q)",
+    first_tok, vocab:piece(first_tok)))
+
+-- Take the snapshot AT this moment, then continue from it twice.
+local blob   = ctx:snapshot()
+local n_past = ctx:n_past()
+print(string.format("  snapshot size : %.1f KB", #blob / 1024))
+
+ctx:decode_single(first_tok)
+local from_a = gen(0, 12, greedy)
+print(string.format("  branch A (no restore) : %q", from_a))
+
+-- Restore into a fresh context. The destination MUST mirror the
+-- source's shape (n_ctx, n_seq_max, kv_type) — restore is a memcpy of
+-- the cache layout, not a logical recreation. Mismatched contexts
+-- silently corrupt or fail with "KV cache is full".
+local ctx_b = model:context({ n_ctx = 4096, n_seq_max = 4 })
+ctx_b:restore(blob)
+ctx_b:set_n_past(n_past)
+ctx_b:decode_single(first_tok)
+greedy:reset()
+local pieces_b = {}
+for _ = 1, 12 do
+    local tok = greedy:sample(ctx_b:ptr(), -1)
+    if vocab:is_eog(tok) then break end
+    pieces_b[#pieces_b + 1] = vocab:piece(tok)
+    ctx_b:decode_single(tok)
+end
+local from_b = (table.concat(pieces_b):gsub("^%s+", ""):gsub("%s+$", ""))
+print(string.format("  branch B (restored)    : %q", from_b))
+print("  match : " .. tostring(from_a == from_b))
+ctx_b:free()
+
+-- ════════════════════════════════════════════════════════════════════════
+-- 2. Sequence forking
+-- ════════════════════════════════════════════════════════════════════════
+--
+-- Same prefill, two divergent continuations sampled with different
+-- seeds. `kv_seq_cp` duplicates seq 0 onto seq 1 inside the same KV
+-- cache, no extra prefill cost.
+
+print("\n[2] Sequence forking")
+
+ctx:kv_clear()
+local p2 = vocab:apply_template(
+    { { role = "user", content = "Name three programming languages :" } },
+    true, -1)
+local t2, n2 = vocab:tokenize(p2, false, true)
+ctx:decode(t2, n2)
+local prefill_pos = ctx:n_past()
+print(string.format("  prefill done (%d tokens) — fork seq 0 → seq 1, seq 2",
+    prefill_pos))
+
 ctx:kv_seq_cp(0, 1, 0, -1)
 ctx:kv_seq_cp(0, 2, 0, -1)
 
-io.write("  [forked seq 0 → seq 1, 2]\n")
+local s_warm = ion7.Sampler.chain():top_k(40):temperature(1.0):dist(111):build()
+local s_cool = ion7.Sampler.chain():top_k(40):temperature(0.4):dist(999):build()
 
--- Generate from each branch independently with different seeds
-local s1 = ion7.Sampler.chain():top_k(40):temperature(0.9):dist(111):build(vocab)
-local s2 = ion7.Sampler.chain():top_k(40):temperature(0.9):dist(999):build(vocab)
+-- The Lua-side `_n_past` counter tracks the LAST decoded position,
+-- not a per-sequence value. To run two parallel branches from the
+-- same prefill we reset it back to `prefill_pos` between branches —
+-- otherwise the second branch would try to write tokens at positions
+-- past the end of its own sequence.
+ctx:set_n_past(prefill_pos)
+print("  branch A (T=1.0) : " .. gen(1, 60, s_warm):gsub("\n", " "))
+ctx:set_n_past(prefill_pos)
+print("  branch B (T=0.4) : " .. gen(2, 60, s_cool):gsub("\n", " "))
+s_warm:free() ; s_cool:free()
 
-local function gen_with(samp, seq, max)
-    samp:reset()
-    local parts = {}
-    for _ = 1, max do
-        local tok = samp:sample(ctx:ptr(), -1)
-        if vocab:is_eog(tok) then break end
-        parts[#parts+1] = vocab:piece(tok, true)
-        ctx:decode_single(tok, seq)
-    end
-    return table.concat(parts):match("^%s*(.-)%s*$")
-end
+-- ════════════════════════════════════════════════════════════════════════
+-- 3. Sliding window (gated on kv_can_shift)
+-- ════════════════════════════════════════════════════════════════════════
+--
+-- When the cache fills past `WINDOW`, rotate the oldest 25 % out by
+-- shifting positions left. The model now attends to a moving window
+-- rather than the original prompt. Models with chunked / segment
+-- attention (some recent Qwen variants) report `kv_can_shift = false`
+-- and skip this demo.
 
-io.write("  Branch A (seed 111): " .. gen_with(s1, 1, 60):gsub("\n", " ") .. "\n")
-io.write("  Branch B (seed 999): " .. gen_with(s2, 2, 60):gsub("\n", " ") .. "\n")
-s1:free(); s2:free()
-
--- ── 3. Sliding window ────────────────────────────────────────────────────────
--- When n_past approaches n_ctx, shift old tokens out of the cache.
--- Only works on models where kv_can_shift() = true.
-
-io.write("\n[3. Sliding window]\n")
+print("\n[3] Sliding window")
 
 if not ctx:kv_can_shift() then
-    io.write("  [SKIP] kv_can_shift=false on this model (Qwen3 uses chunked attention)\n")
-    io.write("  [INFO] For sliding window, use models with standard RoPE (e.g. Llama, Mistral)\n")
+    print("  [SKIP] this model does not support position shifting")
 else
-    local WINDOW = 256  -- tokens to keep
-    local n_gen  = 0
+    local WINDOW = 384
     ctx:kv_clear()
-    prefill("Write a very long story: Once upon a time", 0)
+    local p3 = vocab:apply_template(
+        { { role = "user",
+            content = "Write a long imaginative paragraph about a brave fox." } },
+        true, -1)
+    local t3, n3 = vocab:tokenize(p3, false, true)
+    ctx:decode(t3, n3)
 
-    io.write("  Generating with sliding window (max 500 tokens)...\n")
-    for _ = 1, 500 do
-        local tok = sampler:sample(ctx:ptr(), -1)
+    local fluent = ion7.Sampler.chain():top_k(40):temperature(0.8):dist(7):build()
+    fluent:reset()
+    local n_gen = 0
+    for _ = 1, 400 do
+        local tok = fluent:sample(ctx:ptr(), -1)
         if vocab:is_eog(tok) then break end
-        ctx:decode_single(tok, 0)
+        ctx:decode_single(tok)
         n_gen = n_gen + 1
-
-        -- Slide: remove the oldest tokens when window is full
         if ctx:n_past() >= WINDOW then
-            local shift = math.floor(WINDOW / 4)   -- discard 25% oldest
+            -- Slide the oldest 25 % out of the cache. `kv_seq_shift`
+            -- moves cache positions, but the Lua-side `_n_past`
+            -- mirror does not decrement automatically — we have to
+            -- pull it back ourselves so the next decode lands at
+            -- the correct position.
+            local shift = math.floor(WINDOW / 4)
             ctx:kv_seq_shift(0, -shift, 0, -1)
+            ctx:set_n_past(ctx:n_past() - shift)
         end
     end
-    io.write(string.format("  Generated %d tokens within %d-token window\n", n_gen, WINDOW))
+    print(string.format("  generated %d tokens, KV held to ≤ %d",
+        n_gen, WINDOW))
+    fluent:free()
 end
 
+greedy:free() ; ctx:free() ; model:free()
 ion7.shutdown()

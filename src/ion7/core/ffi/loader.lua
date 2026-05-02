@@ -5,20 +5,26 @@
 local ffi = require "ffi"
 require "ion7.core.ffi.types"   -- ensure types are ready
 
+-- Filter nil candidates (env vars not set) up front : `ipairs` would stop
+-- at the first nil and `table.concat` in the error message would crash on
+-- a sparse table.
 local function _try_load(name, candidates)
-  for _, path in ipairs(candidates) do
-    if path then
-      local ok, lib = pcall(function() return ffi.load(path) end)
-      if ok then return lib end
-    end
+  local clean, n = {}, 0
+  for _, p in pairs(candidates) do
+    if p and p ~= "" then n = n + 1; clean[n] = p end
+  end
+  for _, path in ipairs(clean) do
+    local ok, lib = pcall(function() return ffi.load(path) end)
+    if ok then return lib end
   end
   error(string.format("[ion7-core] %s not found. Candidates: %s",
-    name, table.concat(candidates, " | ")))
+    name, table.concat(clean, " | ")))
 end
 
 local function _candidates(env_var, base_name)
   return {
     os.getenv(env_var),
+    "vendor/llama.cpp/build/bin/lib" .. base_name .. ".so",
     "vendor/llama.cpp/build/lib/lib" .. base_name .. ".so",
     "vendor/llama.cpp/build/" .. base_name .. ".dll",
     "/usr/local/lib/lib" .. base_name .. ".so",

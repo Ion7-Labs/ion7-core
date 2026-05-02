@@ -1,14 +1,35 @@
-# Copy to local.mk and adjust to your llama.cpp install.
-# This file is gitignored - safe to store local paths.
+# Copy to local.mk and edit. local.mk is gitignored ; it is the place
+# to store the absolute path of an external llama.cpp build without
+# polluting the repo. Two recommended forms :
 #
-# Example (external llama.cpp build):
-LIB_DIR        = /home/youruser/llama.cpp/build/bin
-COMMON_LIB_DIR = /home/youruser/llama.cpp/build/common
+#   1. Anchor on $(HOME) when llama.cpp lives in your home directory.
+#   2. Read from an env var so the same local.mk works on multiple
+#      machines (CI runners, VMs, etc.).
 
-# Optional: CUDA architecture for the vendor build (if using make llama)
+# ── Form 1 : $(HOME)-anchored ─────────────────────────────────────────
+# LIB_DIR        = $(HOME)/llama.cpp/build/bin
+# COMMON_LIB_DIR = $(HOME)/llama.cpp/build/common
+
+# ── Form 2 : env-var-anchored ─────────────────────────────────────────
+# Set LLAMA_CPP_DIR=/path/to/llama.cpp in your shell, then :
+# LIB_DIR        = $(LLAMA_CPP_DIR)/build/bin
+# COMMON_LIB_DIR = $(LLAMA_CPP_DIR)/build/common
+
+# ── Optional knobs ────────────────────────────────────────────────────
+
+# CUDA arch passed through to llama.cpp's cmake (only used by `make llama`)
 # CUDA_ARCH = 86    # RTX 30xx (Ampere)
 # CUDA_ARCH = 89    # RTX 40xx (Ada Lovelace)
 # CUDA_ARCH = 80    # A100
 
-# Optional: CPU tuning
+# CPU tuning. `native` builds for the host CPU only.
 # MARCH = native
+
+# Pass extra cmake flags to the vendored llama.cpp build :
+# LLAMA_CMAKE_EXTRA = -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/clang++
+
+# Set ION7_RELEASE=1 to make `make build` embed a relocatable rpath
+# ($ORIGIN / @loader_path) so the resulting ion7_bridge.so finds its
+# sibling libllama in whatever directory the tarball is extracted to.
+# Leave unset for local development.
+# ION7_RELEASE = 1
