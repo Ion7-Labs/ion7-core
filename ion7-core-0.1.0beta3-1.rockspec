@@ -57,9 +57,23 @@ build = {
 set -e
 echo "[ion7-core] backend = ${ION7_BACKEND:-cpu}"
 
+# llama.cpp pin — this commit is what ion7-core's bridge is known
+# to build against. Bumping it here is a real upstream change ; do
+# not touch lightly.
+LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
+LLAMA_CPP_SHA="78433f606fde4d7934a02dcbfd910438d28beccd"
+
 if [ ! -f vendor/llama.cpp/CMakeLists.txt ]; then
-    echo "[ion7-core] initialising vendor/llama.cpp submodule..."
-    git submodule update --init --recursive vendor/llama.cpp
+    echo "[ion7-core] fetching llama.cpp at $LLAMA_CPP_SHA..."
+    # luarocks unpacks `git+https://...` sources without preserving
+    # the parent repo's .git directory, so `git submodule update`
+    # cannot discover the upstream URL. We do a plain clone instead
+    # and check out the pinned commit, which works regardless of how
+    # luarocks staged the source tree.
+    rm -rf vendor/llama.cpp
+    mkdir -p vendor
+    git clone --filter=tree:0 "$LLAMA_CPP_REPO" vendor/llama.cpp
+    git -C vendor/llama.cpp checkout "$LLAMA_CPP_SHA"
 fi
 
 # Backend → cmake flags
@@ -90,12 +104,42 @@ if [ -n "${ION7_LLAMA_CMAKE_EXTRA:-}" ]; then
 fi
 
 echo "[ion7-core] cmake configure: $BACKEND_FLAGS"
+# Performance + relocatability flags :
+#   GGML_LTO=ON
+#       Link-time optimisation. Slower link, ~5-15% throughput gain on
+#       inference workloads.
+#   LLAMA_CURL=OFF
+#       Drop the libcurl dependency. ion7-core never goes through
+#       llama.cpp's HuggingFace downloader path.
+#   GGML_CCACHE=OFF
+#       Silence the "ccache not found" notice. We always build clean.
+#   GGML_BACKEND_DL=OFF
+#       Backends are linked statically into libggml/libllama. No
+#       runtime backend discovery — the rock ships exactly the
+#       backend the user asked for via ION7_BACKEND.
+#   CMAKE_BUILD_WITH_INSTALL_RPATH=ON + CMAKE_INSTALL_RPATH='$ORIGIN'
+#       Single-quoted `$ORIGIN` reaches cmake as the literal string ;
+#       the dynamic linker interprets it at load time as "the
+#       directory of the loading binary". The .so files locate their
+#       siblings in the rock _libs/ directory regardless of where the
+#       rock tree is mounted. luarocks template substitution only
+#       triggers on `$(VAR)`, so the bare `$ORIGIN` passes through.
+#
+# ION7_LLAMA_CMAKE_EXTRA appended at the end overrides any of the
+# above when the user wants to force-disable LTO, swap a backend
+# variant, etc.
 cmake -B vendor/llama.cpp/build -S vendor/llama.cpp \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=ON \
     -DLLAMA_BUILD_TESTS=OFF \
     -DLLAMA_BUILD_EXAMPLES=OFF \
     -DLLAMA_BUILD_SERVER=OFF \
+    -DLLAMA_CURL=OFF \
+    -DGGML_LTO=ON \
+    -DGGML_CCACHE=OFF \
+    -DGGML_BACKEND_DL=OFF \
+    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+    -DCMAKE_INSTALL_RPATH='$ORIGIN' \
     $BACKEND_FLAGS
 
 echo "[ion7-core] cmake build (this can take a while)..."
