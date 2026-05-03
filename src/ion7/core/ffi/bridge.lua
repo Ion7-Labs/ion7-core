@@ -192,6 +192,16 @@ ffi.cdef [[
 
 -- ── Shared-library loader ─────────────────────────────────────────────────
 
+--- Resolve the directory of THIS file so candidate `_libs/ion7_bridge.*`
+--- paths can be tried before falling back to the dev-layout / system
+--- loader paths.
+local function _module_dir()
+    local info = debug.getinfo(1, "S")
+    local src  = info and info.source or ""
+    if src:sub(1, 1) ~= "@" then return nil end
+    return (src:sub(2):gsub("/[^/]*$", ""))
+end
+
 --- Build the dense candidate list for `ffi.load`. The env var slot is
 --- only appended when set ; this avoids putting `nil` in the table,
 --- which would make `#` and `ipairs` behave unpredictably under Lua
@@ -202,6 +212,13 @@ local function bridge_candidates()
     local c = {}
     local env = os.getenv("ION7_BRIDGE_PATH")
     if env and env ~= "" then c[#c + 1] = env end
+    -- Sibling `_libs/` populated by the rockspec install step.
+    local mdir = _module_dir()
+    if mdir then
+        c[#c + 1] = mdir .. "/../_libs/ion7_bridge.so"
+        c[#c + 1] = mdir .. "/../_libs/ion7_bridge.dylib"
+        c[#c + 1] = mdir .. "/../_libs/ion7_bridge.dll"
+    end
     c[#c + 1] = "bridge/ion7_bridge.so"
     c[#c + 1] = "bridge/ion7_bridge.dll"
     c[#c + 1] = "ion7_bridge.so"
