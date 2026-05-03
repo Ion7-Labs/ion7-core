@@ -83,9 +83,10 @@ end
 ---   `n_ubatch`        (integer, default `min(512, n_batch)` — matches llama.cpp)
 ---   `n_seq_max`       (integer, default 1)
 ---   `n_threads`       (integer, default 4)
----   `n_threads_batch` (integer, default `2 × n_threads` — empirically optimal
----                      for prefill on multi-core CPUs ; reduce to `n_threads`
----                      manually on tiny CPUs to avoid oversubscription)
+---   `n_threads_batch` (integer, default `n_threads`. Set higher manually
+---                      ONLY if the caller has genuine spare cores ; on
+---                      pinned processes (taskset) a higher value
+---                      oversubscribes and hurts both prefill and decode.)
 ---   `flash_attn`      (bool,    default false ; auto-forced on for quantised KV)
 ---   `offload_kqv`     (bool,    default true)
 ---   `op_offload`      (bool,    default false)
@@ -133,7 +134,7 @@ function M.context(self, opts)
         p.n_ubatch = n_ubatch
         p.n_seq_max = opts.n_seq_max or 1
         p.n_threads = opts.n_threads or 4
-        p.n_threads_batch = (opts.n_threads_batch and opts.n_threads_batch > 0) and opts.n_threads_batch or (p.n_threads * 2)
+        p.n_threads_batch = (opts.n_threads_batch and opts.n_threads_batch > 0) and opts.n_threads_batch or p.n_threads
         -- LLAMA_FLASH_ATTN_TYPE_ENABLED = 1, AUTO = -1 (per llama.h enum).
         p.flash_attn_type = (force_flash_value or opts.flash_attn) and 1 or -1
         if opts.offload_kqv ~= false then

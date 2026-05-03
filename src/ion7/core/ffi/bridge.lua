@@ -29,6 +29,12 @@ local ffi = require "ffi"
 require "ion7.core.ffi.types" -- needed for llama_*, ggml_* type names
 
 ffi.cdef [[
+  /* ── JIT-friendly decode / encode shims ───────────────────────────── */
+  /* See bridge/bridge_decode.cpp for rationale. These take llama_batch
+     by POINTER instead of by value, which lets LuaJIT JIT the call. */
+  int32_t ion7_context_decode(struct llama_context * ctx, const struct llama_batch * batch);
+  int32_t ion7_context_encode(struct llama_context * ctx, const struct llama_batch * batch);
+
   /* ── Version + VRAM auto-fit ──────────────────────────────────────── */
   const char* ion7_bridge_version(void);
 

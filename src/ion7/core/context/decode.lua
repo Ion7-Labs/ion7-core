@@ -27,6 +27,15 @@ require "ion7.core.ffi.types"
 
 local llama_context = require "ion7.core.ffi.llama.context" -- llama_decode, llama_encode
 
+-- The bridge ships JIT-friendly shims that take `llama_batch` by pointer
+-- instead of by value. We call into them in the hot path so LuaJIT can
+-- JIT the surrounding Lua loop ; without this the trace aborts with
+-- "NYI: unsupported C function type" on every decode call. See
+-- bridge/bridge_decode.cpp for the rationale.
+local bridge        = require "ion7.core.ffi.bridge"
+local ion7_decode   = bridge.ion7_context_decode
+local ion7_encode   = bridge.ion7_context_encode
+
 local ffi_fill = ffi.fill
 
 local M = {}
@@ -94,7 +103,7 @@ function M.decode(self, tokens, n_tokens, seq_id, pos_offset)
                 log_ptr[end_i] = 1
             end
             b.n_tokens = n
-            local rc = llama_context.llama_decode(self._ptr, b)
+            local rc = ion7_decode(self._ptr, b)
             if rc ~= 0 then
                 decode_failed("decode", rc)
             end
@@ -119,7 +128,7 @@ function M.decode(self, tokens, n_tokens, seq_id, pos_offset)
                 log_ptr[end_i] = 1
             end
             b.n_tokens = n
-            local rc = llama_context.llama_decode(self._ptr, b)
+            local rc = ion7_decode(self._ptr, b)
             if rc ~= 0 then
                 decode_failed("decode", rc)
             end
@@ -147,7 +156,7 @@ function M.decode_single(self, token, seq_id)
     b.seq_id[0][0] = seq_id or 0
     b.logits[0] = 1
     b.n_tokens = 1
-    local rc = llama_context.llama_decode(self._ptr, b)
+    local rc = ion7_decode(self._ptr, b)
     if rc ~= 0 then
         decode_failed("decode_single", rc)
     end
@@ -183,7 +192,7 @@ function M.decode_multi(self, tokens, seq_id)
     end
     b.n_tokens = n
 
-    local rc = llama_context.llama_decode(self._ptr, b)
+    local rc = ion7_decode(self._ptr, b)
     if rc ~= 0 then
         decode_failed("decode_multi", rc)
     end
@@ -225,7 +234,7 @@ function M.encode(self, tokens, n_tokens, seq_id, pos_offset)
                 b.logits[i] = 1
             end
             b.n_tokens = n
-            local rc = llama_context.llama_encode(self._ptr, b)
+            local rc = ion7_encode(self._ptr, b)
             if rc ~= 0 then
                 decode_failed("encode", rc)
             end
@@ -245,7 +254,7 @@ function M.encode(self, tokens, n_tokens, seq_id, pos_offset)
                 b.logits[i] = 1
             end
             b.n_tokens = n
-            local rc = llama_context.llama_encode(self._ptr, b)
+            local rc = ion7_encode(self._ptr, b)
             if rc ~= 0 then
                 decode_failed("encode", rc)
             end

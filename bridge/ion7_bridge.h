@@ -68,6 +68,26 @@ extern "C" {
 #include "ggml-opt.h"
 
 /* =========================================================================
+ * JIT-friendly decode / encode shims (single exception to the
+ * "libcommon-only" rule documented above)
+ *
+ * Upstream `llama_decode` / `llama_encode` take `struct llama_batch` by
+ * VALUE. LuaJIT's FFI cannot JIT-compile C calls with aggregates passed
+ * by value — every per-token call aborts the trace, drops back to the
+ * interpreter, and re-stitches on return. These shims forward by
+ * pointer so the Lua generation loop compiles into a single trace.
+ *
+ * Behaviourally identical to the upstream functions ; semantics, error
+ * codes, KV cache effects are unchanged.
+ * ======================================================================= */
+
+/** Pointer-passing wrapper around `llama_decode`. */
+int32_t ion7_context_decode(struct llama_context * ctx, const struct llama_batch * batch);
+
+/** Pointer-passing wrapper around `llama_encode`. */
+int32_t ion7_context_encode(struct llama_context * ctx, const struct llama_batch * batch);
+
+/* =========================================================================
  * Version
  * ======================================================================= */
 
