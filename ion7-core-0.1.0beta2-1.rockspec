@@ -102,10 +102,14 @@ echo "[ion7-core] cmake build (this can take a while)..."
 cmake --build vendor/llama.cpp/build --config Release -j
 
 echo "[ion7-core] building ion7_bridge..."
+# `$PWD` is a regular shell variable. luarocks template substitution
+# only triggers on the `$(VAR)` form, so the bare `$PWD` passes through
+# untouched.
+ROOT="$PWD"
 $(MAKE) -C bridge \
-    LIB_DIR="$(pwd)/vendor/llama.cpp/build/bin" \
-    COMMON_LIB_DIR="$(pwd)/vendor/llama.cpp/build/common" \
-    LLAMA_SRC="$(pwd)/vendor/llama.cpp" \
+    LIB_DIR="$ROOT/vendor/llama.cpp/build/bin" \
+    COMMON_LIB_DIR="$ROOT/vendor/llama.cpp/build/common" \
+    LLAMA_SRC="$ROOT/vendor/llama.cpp" \
     ION7_RELEASE=1
 ]],
 
@@ -118,24 +122,55 @@ $(MAKE) -C bridge \
     -- ion7_bridge resolves libllama from the same _libs/ directory
     -- regardless of where the rock tree is mounted.
     install_command = [[
-set -e
-mkdir -p "$(LUADIR)/ion7"
-cp -r src/ion7/* "$(LUADIR)/ion7/"
+set -eu
 
-mkdir -p "$(LUADIR)/ion7/core/_libs"
-# Copy every shared / dynamic library produced by the build, including
-# version symlinks (`libllama.so.0`) and platform variants. `cp -d`
-# preserves symlinks ; the `|| true` keeps install going on platforms
-# that produce a different filename set (e.g. .dylib only on macOS).
-cp -d vendor/llama.cpp/build/bin/lib*.so*    "$(LUADIR)/ion7/core/_libs/" 2>/dev/null || true
-cp -d vendor/llama.cpp/build/bin/lib*.dylib* "$(LUADIR)/ion7/core/_libs/" 2>/dev/null || true
-cp -d vendor/llama.cpp/build/bin/*.dll       "$(LUADIR)/ion7/core/_libs/" 2>/dev/null || true
-cp bridge/ion7_bridge.so    "$(LUADIR)/ion7/core/_libs/" 2>/dev/null || true
-cp bridge/ion7_bridge.dylib "$(LUADIR)/ion7/core/_libs/" 2>/dev/null || true
-cp bridge/ion7_bridge.dll   "$(LUADIR)/ion7/core/_libs/" 2>/dev/null || true
+LUA_TARGET="$(LUADIR)"
+LIB_TARGET="$(LUADIR)/ion7/core/_libs"
+BIN_TARGET="$(BINDIR)"
 
-mkdir -p "$(BINDIR)"
-cp bin/ion7-load.lua "$(BINDIR)/"
-chmod 0755 "$(BINDIR)/ion7-load.lua"
+echo "[ion7-core] install Lua tree → $LUA_TARGET/ion7"
+mkdir -p "$LUA_TARGET/ion7"
+cp -r src/ion7/. "$LUA_TARGET/ion7/"
+
+echo "[ion7-core] install libraries → $LIB_TARGET"
+mkdir -p "$LIB_TARGET"
+
+# Dereference symlinks (`cp -L`) so every entry in the destination is
+# a real file. luarocks's post-install copy step does not preserve
+# symlinks, and a chain of `lib*.so → lib*.so.0 → lib*.so.0.x.y` would
+# otherwise produce errors mid-install. Each plain file becomes a real
+# copy of the underlying binary — a few MB of disk for a self-contained
+# install is the right tradeoff.
+copy_if_exists() {
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        cp -L "$1" "$LIB_TARGET/"
+        echo "  copied $1"
+    fi
+}
+for f in vendor/llama.cpp/build/bin/lib*.so* \
+         vendor/llama.cpp/build/bin/lib*.dylib* \
+         vendor/llama.cpp/build/bin/*.dll \
+         bridge/ion7_bridge.so \
+         bridge/ion7_bridge.dylib \
+         bridge/ion7_bridge.dll ; do
+    copy_if_exists "$f"
+done
+
+# At least libllama and ion7_bridge must have landed. Fail loud if not —
+# a silent install of an unloadable rock is worse than a failed install.
+if ! ls "$LIB_TARGET"/libllama.* >/dev/null 2>&1; then
+    echo "[ion7-core] FATAL: no libllama.* in $LIB_TARGET" >&2
+    exit 1
+fi
+if ! ls "$LIB_TARGET"/ion7_bridge.* >/dev/null 2>&1; then
+    echo "[ion7-core] FATAL: ion7_bridge.* missing in $LIB_TARGET" >&2
+    exit 1
+fi
+
+mkdir -p "$BIN_TARGET"
+cp bin/ion7-load.lua "$BIN_TARGET/"
+chmod 0755 "$BIN_TARGET/ion7-load.lua"
+
+echo "[ion7-core] install complete"
 ]],
 }
