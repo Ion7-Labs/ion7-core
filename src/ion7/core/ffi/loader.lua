@@ -21,9 +21,22 @@ local function _try_load(name, candidates)
     name, table.concat(clean, " | ")))
 end
 
+--- Resolve the directory of THIS file. Used to find libraries that the
+--- rockspec's install step copies into `<package>/_libs/` next to the
+--- top-level `core/` directory.
+local function _module_dir()
+  local info = debug.getinfo(1, "S")
+  local src  = info and info.source or ""
+  if src:sub(1, 1) ~= "@" then return nil end
+  return (src:sub(2):gsub("/[^/]*$", ""))
+end
+
 local function _candidates(env_var, base_name)
+  local mdir = _module_dir()
   return {
     os.getenv(env_var),
+    mdir and (mdir .. "/../_libs/lib" .. base_name .. ".so"),
+    mdir and (mdir .. "/../_libs/lib" .. base_name .. ".dylib"),
     "vendor/llama.cpp/build/bin/lib" .. base_name .. ".so",
     "vendor/llama.cpp/build/lib/lib" .. base_name .. ".so",
     "vendor/llama.cpp/build/" .. base_name .. ".dll",
