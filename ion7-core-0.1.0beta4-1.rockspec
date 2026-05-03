@@ -1,9 +1,9 @@
 package = "ion7-core"
-version = "0.1.0beta3-1"
+version = "0.1.0beta4-1"
 
 source = {
     url = "git+https://github.com/Ion7-Labs/ion7-core.git",
-    tag = "v0.1.0-beta3",
+    tag = "v0.1.0-beta4",
 }
 
 description = {
