@@ -29,8 +29,10 @@
 #   bridge_text.cpp     - regex_partial + json_schema_to_grammar + json utils
 #   bridge_training.cpp - llama_opt + common_opt_dataset_init
 #   bridge_fit.cpp      - common_fit_params (VRAM auto-fit) + version
-#   bridge_decode.cpp   - JIT-friendly llama_decode / llama_encode shims
-#                         (struct-by-value workaround for LuaJIT FFI)
+#   bridge_decode.cpp   - 1:1 shims around llama_decode / llama_encode
+#                         (struct-by-pointer workaround for LuaJIT FFI)
+#   bridge_fast.cpp     - composite fast-path functions that fuse common
+#                         primitive sequences (sample+eog+decode, ...)
 #
 # Usage:
 #   make LIB_DIR=/path/to/llama.cpp/build/bin
@@ -59,7 +61,8 @@ BRIDGE_SRCS := bridge_chat.cpp \
                bridge_text.cpp \
                bridge_training.cpp \
                bridge_fit.cpp \
-               bridge_decode.cpp
+               bridge_decode.cpp \
+               bridge_fast.cpp
 
 # Include path resolution.
 #

@@ -277,16 +277,15 @@ struct llama_sampler* ion7_reasoning_budget_init(const struct llama_model* model
     /* Standard delimiters used by Qwen3, DeepSeek-R1 and other
      * reasoning models. The "forced" sequence is what the sampler
      * inserts when the budget is exhausted; here it is identical to
-     * the closing delimiter so the model resumes normal output cleanly. */
-    auto start_toks   = tokenize_literal(vocab, "<think>\n");
-    auto end_toks     = tokenize_literal(vocab, "\n</think>\n");
-    auto forced_toks  = end_toks;
-    auto prefill_toks = tokenize_literal(vocab, "<think>\n\n</think>\n");
+     * the closing delimiter so the model resumes normal output cleanly.
+     */
+    auto start_toks  = tokenize_literal(vocab, "<think>\n");
+    auto end_toks    = tokenize_literal(vocab, "\n</think>\n");
+    auto forced_toks = end_toks;
 
     return common_reasoning_budget_init(vocab,
                                         start_toks,
                                         end_toks,
                                         forced_toks,
-                                        n_budget,
-                                        prefill_toks);
+                                        n_budget);
 }

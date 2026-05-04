@@ -87,6 +87,22 @@ int32_t ion7_context_decode(struct llama_context * ctx, const struct llama_batch
 /** Pointer-passing wrapper around `llama_encode`. */
 int32_t ion7_context_encode(struct llama_context * ctx, const struct llama_batch * batch);
 
+/**
+ * Composite fast-path : sample + EOG check + decode in one bridge call.
+ * Implemented in bridge_fast.cpp.
+ *
+ * Caller pre-configures the single-token `batch` once (n_tokens=1,
+ * seq_id[0][0]=<seq>, logits[0]=1) and updates `batch->pos[0]` before
+ * each call. The function writes `batch->token[0]` internally.
+ *
+ * Returns :  >=0 — sampled token id ;  -1 — EOG ;  -2 — decode failed.
+ */
+int32_t ion7_context_step(struct llama_context      * ctx,
+                          struct llama_batch        * batch,
+                          struct llama_sampler      * sampler,
+                          const  struct llama_vocab * vocab,
+                          int                         idx);
+
 /* =========================================================================
  * Version
  * ======================================================================= */

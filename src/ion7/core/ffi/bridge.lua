@@ -35,6 +35,14 @@ ffi.cdef [[
   int32_t ion7_context_decode(struct llama_context * ctx, const struct llama_batch * batch);
   int32_t ion7_context_encode(struct llama_context * ctx, const struct llama_batch * batch);
 
+  /* Fast-path : sample + EOG check + decode in one C call.
+     Returns sampled token id, -1 on EOG, -2 on decode error. */
+  int32_t ion7_context_step(struct llama_context     * ctx,
+                            struct llama_batch       * batch,
+                            struct llama_sampler     * sampler,
+                            const struct llama_vocab * vocab,
+                            int                        idx);
+
   /* ── Version + VRAM auto-fit ──────────────────────────────────────── */
   const char* ion7_bridge_version(void);
 

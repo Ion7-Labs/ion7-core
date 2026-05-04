@@ -9,14 +9,12 @@
  * `std::vector` and `std::string` parameters and consume nlohmann/json
  * internally). The wrappers below pin them to a flat C ABI.
  *
- * Hot-path note for `common_sampler`:
- *   `ion7_csampler_sample_accept` exists specifically so the per-token
- *   inner loop crosses the FFI boundary ONCE per token instead of
- *   twice. Keep using it from Lua unless you have a reason to inspect
- *   the sampled token before accepting it.
+ * For the per-token hot loop, prefer `ion7_csampler_sample_accept` (in
+ * bridge_fast.cpp) which fuses sample + accept into a single FFI call.
  */
 
 #include "ion7_bridge.h"
+#include "bridge_internal.hpp"
 
 #include "common.h"
 #include "sampling.h"
@@ -30,17 +28,10 @@
 
 /* =========================================================================
  * common_sampler — DRY, XTC, Mirostat, grammar_lazy, ...
+ *
+ * `struct ion7_csampler` is defined in bridge_internal.hpp so the
+ * sample_accept fast-path in bridge_fast.cpp can reach `s->smpl`.
  * ======================================================================= */
-
-/**
- * Owning wrapper around `common_sampler*`. We hold the pointer in a
- * dedicated struct rather than reinterpret-casting the `common_sampler`
- * itself so we can later add per-instance state (e.g. counters,
- * cached parameters) without breaking the existing handle ABI.
- */
-struct ion7_csampler {
-    common_sampler* smpl;
-};
 
 extern "C"
 ion7_csampler_t* ion7_csampler_init(
@@ -134,18 +125,6 @@ void ion7_csampler_accept(ion7_csampler_t* s, int32_t token)
 }
 
 extern "C"
-int32_t ion7_csampler_sample_accept(ion7_csampler_t*      s,
-                                    struct llama_context* ctx,
-                                    int                   idx,
-                                    int                   grammar_first)
-{
-    if (!s) return -1;
-    llama_token tok = common_sampler_sample(s->smpl, ctx, idx, (bool)grammar_first);
-    common_sampler_accept(s->smpl, tok, /*accept_grammar=*/true);
-    return tok;
-}
-
-extern "C"
 void ion7_csampler_reset(ion7_csampler_t* s)
 {
     if (s) common_sampler_reset(s->smpl);
@@ -195,32 +174,38 @@ ion7_speculative_t* ion7_speculative_init(
     auto* w = new (std::nothrow) ion7_speculative;
     if (!w) return nullptr;
 
-    w->params.type  = (common_speculative_type)type;
-    w->params.n_max = (n_draft  > 0) ? n_draft : 16;
-    w->params.n_min = 0;
-    if (ngram_min > 0) w->params.ngram_size_n = (uint16_t)ngram_min;
-    if (ngram_max > 0) w->params.ngram_size_m = (uint16_t)ngram_max;
+    w->params.type        = (common_speculative_type)type;
+    w->params.draft.n_max = (n_draft > 0) ? n_draft : 16;
+    w->params.draft.n_min = 0;
 
-    /* Draft-model branch : libcommon spins up its own draft context
-     * internally via `llama_init_from_model(model_dft, cparams_dft)`.
-     * The default-constructed `cparams_dft` is zero-filled — leaving
-     * it untouched would request `n_ctx = 0`, which crashes the draft
-     * context build. We seed it with llama.cpp's documented defaults
-     * and mirror the target context's window size so the draft can
-     * fit the same prompt. */
+    /* ngram window applies to whichever speculator variant the caller
+     * selected ; we write the same size to all three n-gram structs so
+     * the active one picks it up regardless. */
+    if (ngram_min > 0) {
+        w->params.ngram_simple .size_n = (uint16_t)ngram_min;
+        w->params.ngram_map_k  .size_n = (uint16_t)ngram_min;
+        w->params.ngram_map_k4v.size_n = (uint16_t)ngram_min;
+    }
+    if (ngram_max > 0) {
+        w->params.ngram_simple .size_m = (uint16_t)ngram_max;
+        w->params.ngram_map_k  .size_m = (uint16_t)ngram_max;
+        w->params.ngram_map_k4v.size_m = (uint16_t)ngram_max;
+    }
+
+    /* Seed `draft.cparams` with sane defaults mirroring the target
+     * context — `common_speculative_init` calls `llama_init_from_model`
+     * with these and a zero-filled struct would request n_ctx=0. */
     if (ctx_dft) {
-        w->params.model_dft   = const_cast<llama_model*>(llama_get_model(ctx_dft));
-        w->params.cparams_dft = llama_context_default_params();
+        w->params.draft.model   = const_cast<llama_model*>(llama_get_model(ctx_dft));
+        w->params.draft.cparams = llama_context_default_params();
         if (ctx_tgt) {
-            w->params.cparams_dft.n_ctx   = llama_n_ctx  (ctx_tgt);
-            w->params.cparams_dft.n_batch = llama_n_batch(ctx_tgt);
+            w->params.draft.cparams.n_ctx   = llama_n_ctx  (ctx_tgt);
+            w->params.draft.cparams.n_batch = llama_n_batch(ctx_tgt);
         }
-        /* libcommon's `has_draft` gate is `!params.mparams_dft.path.empty()`.
-         * The path is only used to decide whether to register the
-         * DRAFT implementation — `model_dft` is what actually drives
-         * the draft pass. We seed a sentinel so the gate fires even
-         * when the model has been loaded out-of-band. */
-        w->params.mparams_dft.path = "<external>";
+        /* `has_draft()` checks `!draft.mparams.path.empty()` — we set
+         * a sentinel so the gate fires when the draft model is supplied
+         * out-of-band rather than loaded from a path. */
+        w->params.draft.mparams.path = "<external>";
     }
 
     w->spec = common_speculative_init(w->params, ctx_tgt);

@@ -275,5 +275,8 @@ end
 for k, v in pairs(require "ion7.core.context.logits") do
     Context[k] = v
 end
+for k, v in pairs(require "ion7.core.context.fast") do
+    Context[k] = v
+end
 
 return Context

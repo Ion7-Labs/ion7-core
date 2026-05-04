@@ -10,9 +10,24 @@
  * implementation files free of duplicated tiny utilities.
  */
 
+#include "ion7_bridge.h"
+
+#include "common.h"
+#include "sampling.h"
+
 #include <cstring>
 #include <cstdint>
 #include <string>
+
+/**
+ * Concrete representation of `ion7_csampler_t`. Shared between
+ * `bridge_sampling.cpp` (init / free / sample / accept / reset / ...)
+ * and `bridge_fast.cpp` (sample_accept hot-path) so the fast-path can
+ * reach `s->smpl` without going through an accessor indirection.
+ */
+struct ion7_csampler {
+    common_sampler* smpl;
+};
 
 /**
  * Copy a `std::string` into a caller-provided C buffer with explicit

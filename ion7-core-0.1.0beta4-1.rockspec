@@ -61,7 +61,7 @@ echo "[ion7-core] backend = ${ION7_BACKEND:-cpu}"
 # to build against. Bumping it here is a real upstream change ; do
 # not touch lightly.
 LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
-LLAMA_CPP_SHA="78433f606fde4d7934a02dcbfd910438d28beccd"
+LLAMA_CPP_SHA="63d93d17336e41e4cc73a64451e5b1d2477abdb1"
 
 if [ ! -f vendor/llama.cpp/CMakeLists.txt ]; then
     echo "[ion7-core] fetching llama.cpp at $LLAMA_CPP_SHA..."
@@ -105,9 +105,16 @@ fi
 
 echo "[ion7-core] cmake configure: $BACKEND_FLAGS"
 # Performance + relocatability flags :
+#   GGML_NATIVE=OFF
+#       Disable `-march=native -mtune=native`. The matmul kernels in
+#       llama.cpp's libggml-cpu produce ~80% slower prefill code under
+#       `-mtune=znver5` (likely a gcc instruction-scheduling regression).
+#       OFF lets ggml pick its individual feature flags (AVX, AVX2, FMA,
+#       F16C, AVX512, AVX_VNNI, AMX_INT8 ...) explicitly — same SIMD set,
+#       better scheduling.
 #   GGML_LTO=ON
-#       Link-time optimisation. Slower link, ~5-15% throughput gain on
-#       inference workloads.
+#       Link-time optimisation. Slower link, no measurable runtime gain
+#       in our bench but kept for binary-size predictability.
 #   LLAMA_CURL=OFF
 #       Drop the libcurl dependency. ion7-core never goes through
 #       llama.cpp's HuggingFace downloader path.
@@ -135,6 +142,7 @@ cmake -B vendor/llama.cpp/build -S vendor/llama.cpp \
     -DLLAMA_BUILD_EXAMPLES=OFF \
     -DLLAMA_BUILD_SERVER=OFF \
     -DLLAMA_CURL=OFF \
+    -DGGML_NATIVE=OFF \
     -DGGML_LTO=ON \
     -DGGML_CCACHE=OFF \
     -DGGML_BACKEND_DL=OFF \

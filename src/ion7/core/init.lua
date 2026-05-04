@@ -122,6 +122,29 @@ local ffi_string = ffi.string
 function ion7.init(opts)
     opts = opts or {}
 
+    -- Bias the JIT toward the inference workload : compile loops sooner
+    -- (decode reaches steady state in tens of tokens, default hotloop=56
+    -- delays trace start), unroll wider so 64-token decode loops fit
+    -- in one trace, allow longer traces for sampler chains. Caller can
+    -- override via opts.jit_opt = false (e.g. when comparing against
+    -- vanilla LuaJIT) or opts.jit_opt = "custom string".
+    if opts.jit_opt ~= false then
+        local jit_opt = require "jit.opt"
+        local custom  = type(opts.jit_opt) == "string"
+        if custom then
+            jit_opt.start(opts.jit_opt)
+        else
+            jit_opt.start(
+                "hotloop=20",
+                "loopunroll=32",
+                "callunroll=8",
+                "maxrecord=8000",
+                "maxsnap=1000",
+                "maxirconst=1000"
+            )
+        end
+    end
+
     -- Wire up our log dispatcher BEFORE backend_init so the backend's
     -- own boot messages route through our level filter.
     local log = ion7.log -- triggers lazy require
