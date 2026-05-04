@@ -138,6 +138,8 @@ function ion7.init(opts)
                 "hotloop=20",
                 "loopunroll=32",
                 "callunroll=8",
+                "maxtrace=2000",
+                "maxmcode=2048",
                 "maxrecord=8000",
                 "maxsnap=1000",
                 "maxirconst=1000"
