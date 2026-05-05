@@ -47,12 +47,18 @@ local KV_TYPES = {
 }
 
 -- Pooling strategy strings → `enum llama_pooling_type` numeric value.
+-- The llama.cpp enum order is :
+--   UNSPECIFIED = -1,  NONE = 0,  MEAN = 1,  CLS = 2,  LAST = 3,  RANK = 4
+-- "none" must map to 0 (NONE) — mapping it to -1 (UNSPECIFIED) lets the
+-- model's metadata-baked default win, which silently produces pooled
+-- output when the caller asked for token-level vectors.
 local POOLING_TYPES = {
-    none = -1,
-    mean = 1,
-    cls = 2,
-    last = 3,
-    rank = 4
+    unspecified = -1,
+    none        = 0,
+    mean        = 1,
+    cls         = 2,
+    last        = 3,
+    rank        = 4,
 }
 
 local M = {}

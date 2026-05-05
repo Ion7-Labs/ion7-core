@@ -248,6 +248,54 @@ function M.embedding(self, seq_id, dim)
     return out
 end
 
+-- ── Per-token embeddings (pooling = "none" only) ──────────────────────────
+--
+-- When the context was built with `pooling = "none"`, llama.cpp returns
+-- one embedding vector per decoded token (rather than a single pooled
+-- vector). The functions below expose both the raw row-major float*
+-- buffer (zero-copy fast path) and a per-token Lua-table accessor.
+--
+-- Use cases : late chunking (Jina, arXiv:2409.04701), token-level
+-- attribution, contrastive sentence-pair scoring without re-decoding.
+
+--- Raw float* pointer to ALL token embeddings of the most recent
+--- decode. Layout : `[n_tokens][n_embd]` row-major. Owned by the
+--- context — do NOT free, do NOT retain past the next decode. Returns
+--- nil when the context was not built with `pooling = "none"` or when
+--- nothing has been decoded yet.
+function M.embeddings_all_ptr(self)
+    return llama_logits.llama_get_embeddings(self._ptr)
+end
+
+--- Raw float* pointer to the embedding of the i-th decoded token.
+--- 0-based. Same ownership rules as `embeddings_all_ptr`.
+function M.embedding_token_ptr(self, i)
+    return llama_logits.llama_get_embeddings_ith(self._ptr, i or 0)
+end
+
+--- Per-token embedding as a copied Lua table. Convenience wrapper over
+--- `embedding_token_ptr` for callers that want to retain the vector
+--- across decodes. Returns nil when no embedding is available at idx.
+---
+--- @param  idx integer  0-based token index in the most recent batch.
+--- @param  dim integer? Embedding dimension. Defaults to the parent
+---                       Model's `n_embd` when reachable.
+--- @return table|nil
+function M.embedding_token(self, idx, dim)
+    local p = llama_logits.llama_get_embeddings_ith(self._ptr, idx)
+    if p == nil then return nil end
+
+    if not dim then
+        dim = (self._model_ref and tonumber(self._model_ref:n_embd())) or 4096
+    end
+
+    local out = {}
+    for i = 0, dim - 1 do
+        out[i + 1] = p[i]
+    end
+    return out
+end
+
 -- ── Adapters (control vector, sampler-per-sequence) ───────────────────────
 
 --- Apply a control vector (activation steering) to this context.

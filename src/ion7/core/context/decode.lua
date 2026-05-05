@@ -163,6 +163,74 @@ function M.decode_single(self, token, seq_id)
     self._n_past = self._n_past + 1
 end
 
+-- ── decode_for_embeddings (every position emits its embedding) ───────────
+
+--- Decode `n_tokens` with `logits[i] = 1` on EVERY position. Used when
+--- the context was built with `pooling = "none"` and the caller needs
+--- one embedding per token (late chunking, token-level attribution,
+--- contrastive analyses).
+---
+--- Same chunking, table / cdata, and `pos_offset` semantics as `decode`.
+--- The only difference is that the per-token logits flags are all set
+--- before each chunk's `llama_decode` call, which forces llama.cpp to
+--- emit the embedding for each token in the batch.
+---
+--- @param  tokens     cdata|table
+--- @param  n_tokens   integer?
+--- @param  seq_id     integer?
+--- @param  pos_offset integer?
+--- @return integer    Last chunk size.
+function M.decode_for_embeddings(self, tokens, n_tokens, seq_id, pos_offset)
+    local is_table = type(tokens) == "table"
+    n_tokens = n_tokens or (is_table and #tokens or 0)
+    seq_id = seq_id or 0
+    pos_offset = pos_offset or self._n_past
+
+    local n_batch = self._n_batch
+    local b = self._decode_batch
+    local done = 0
+    local last_n = 0
+
+    if is_table then
+        while done < n_tokens do
+            local n = n_tokens - done
+            if n > n_batch then n = n_batch end
+            local base = pos_offset + done
+            for i = 0, n - 1 do
+                b.token[i] = tokens[done + i + 1]
+                b.pos[i] = base + i
+                b.seq_id[i][0] = seq_id
+                b.logits[i] = 1
+            end
+            b.n_tokens = n
+            local rc = ion7_decode(self._ptr, b)
+            if rc ~= 0 then decode_failed("decode_for_embeddings", rc) end
+            done = done + n
+            last_n = n
+        end
+    else
+        while done < n_tokens do
+            local n = n_tokens - done
+            if n > n_batch then n = n_batch end
+            local base = pos_offset + done
+            for i = 0, n - 1 do
+                b.token[i] = tokens[done + i]
+                b.pos[i] = base + i
+                b.seq_id[i][0] = seq_id
+                b.logits[i] = 1
+            end
+            b.n_tokens = n
+            local rc = ion7_decode(self._ptr, b)
+            if rc ~= 0 then decode_failed("decode_for_embeddings", rc) end
+            done = done + n
+            last_n = n
+        end
+    end
+
+    self._n_past = pos_offset + n_tokens
+    return last_n
+end
+
 -- ── decode_multi (every position has logits — for speculative verify) ─────
 
 --- Decode `#tokens` tokens with logits enabled for EVERY position. After
